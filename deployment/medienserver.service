@@ -1,0 +1,19 @@
+[Unit]
+Description=Medienserver für Schulungsvideos
+After=network.target
+
+[Service]
+Type=simple
+User=medienserver
+Group=www-data
+WorkingDirectory=/opt/medienserver
+EnvironmentFile=/opt/medienserver/.env
+ExecStart=/opt/medienserver/.venv/bin/gunicorn --workers 2 --threads 2 --bind 127.0.0.1:8000 app:create_app()
+Restart=on-failure
+RestartSec=5
+UMask=0027
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

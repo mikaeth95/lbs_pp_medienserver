@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ video.title }} · Medienserver{% endblock %}
+{% block content %}
+  <a class="back-link" href="{{ url_for('catalog') }}">← Zur Videothek</a>
+  <article class="detail-layout">
+    <section class="player-shell" aria-label="Videoplayer">
+      <video id="video-player" controls preload="metadata" {% if video.thumbnail_path %}poster="{{ url_for('serve_thumbnail', filename=video.thumbnail_path) }}"{% endif %}>
+        <source src="{{ url_for('serve_video', filename=video.video_path) }}" type="video/mp4">
+        Dein Browser unterstützt den HTML5-Videoplayer nicht.
+      </video>
+      <div class="seek-controls" aria-label="Sprungsteuerung">
+        <button class="button secondary" type="button" data-seek="-10">− 10 Sekunden</button>
+        <button class="button secondary" type="button" data-seek="10">+ 10 Sekunden</button>
+      </div>
+    </section>
+
+    <section class="video-info">
+      <div class="tag-row">
+        <span class="tag">{{ video.topic }}</span>
+        <span class="language-tag">{{ video.language }}</span>
+      </div>
+      <h1>{{ video.title }}</h1>
+      <p class="description">{{ video.description or 'Keine Beschreibung vorhanden.' }}</p>
+      <dl class="metadata">
+        <div><dt>Thema</dt><dd>{{ video.topic }}</dd></div>
+        <div><dt>Sprache</dt><dd>{{ language_names[video.language] }}</dd></div>
+        <div><dt>Dauer</dt><dd>{{ video.duration_seconds|duration }}</dd></div>
+        <div><dt>Erscheinungsjahr</dt><dd>{{ video.year }}</dd></div>
+      </dl>
+    </section>
+  </article>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='player.js') }}" defer></script>{% endblock %}

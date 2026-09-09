@@ -1,0 +1,12 @@
+.env
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+instance/
+uploads/
+*.sqlite3
+*.db
+.coverage
+htmlcov/

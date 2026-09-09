@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Videos verwalten · Medienserver{% endblock %}
+{% block content %}
+  <section class="page-heading">
+    <div>
+      <p class="eyebrow">Medienbestand</p>
+      <h1>Videos verwalten</h1>
+    </div>
+    <a class="button primary" href="{{ url_for('upload_video') }}">+ Video hochladen</a>
+  </section>
+
+  {% if videos %}
+    <div class="admin-list">
+      {% for video in videos %}
+        <article class="admin-row">
+          <div class="admin-thumb">
+            {% if video.thumbnail_path %}
+              <img src="{{ url_for('serve_thumbnail', filename=video.thumbnail_path) }}" alt="">
+            {% else %}<span aria-hidden="true">▶</span>{% endif %}
+          </div>
+          <div class="admin-summary">
+            <h2>{{ video.title }}</h2>
+            <p>{{ video.topic }} · {{ video.language }} · {{ video.duration_seconds|duration }} · {{ video.year }}</p>
+          </div>
+          <div class="admin-actions">
+            <a class="button secondary" href="{{ url_for('edit_video', video_id=video.id) }}">Bearbeiten</a>
+            <form method="post" action="{{ url_for('delete_video', video_id=video.id) }}" onsubmit="return confirm('Video und Dateien wirklich löschen?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="button danger" type="submit">Löschen</button>
+            </form>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <section class="empty-state">
+      <span aria-hidden="true">＋</span><h2>Noch keine Videos</h2>
+      <p>Lade dein erstes vorbereitetes MP4-Video hoch.</p>
+      <a class="button primary empty-action" href="{{ url_for('upload_video') }}">Video hochladen</a>
+    </section>
+  {% endif %}
+{% endblock %}

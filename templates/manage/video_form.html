@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Video hochladen' if mode == 'new' else 'Video bearbeiten' }} · Medienserver{% endblock %}
+{% block content %}
+  <a class="back-link" href="{{ url_for('manage_videos') }}">← Zur Verwaltung</a>
+  <section class="form-card">
+    <p class="eyebrow">Medienbestand</p>
+    <h1>{{ 'Video hochladen' if mode == 'new' else 'Video bearbeiten' }}</h1>
+    <form method="post" enctype="multipart/form-data" class="video-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label class="full"><span>Titel *</span><input name="title" required maxlength="200" value="{{ request.form.get('title', video.title if video else '') }}"></label>
+      <label class="full"><span>Beschreibung</span><textarea name="description" rows="5">{{ request.form.get('description', video.description if video else '') }}</textarea></label>
+      <label><span>Thema *</span><input name="topic" required maxlength="100" placeholder="z. B. Excel" value="{{ request.form.get('topic', video.topic if video else '') }}"></label>
+      <label><span>Sprache *</span>
+        {% set selected_language = request.form.get('language', video.language if video else 'DE') %}
+        <select name="language" required><option value="DE" {% if selected_language == 'DE' %}selected{% endif %}>Deutsch</option><option value="EN" {% if selected_language == 'EN' %}selected{% endif %}>Englisch</option></select>
+      </label>
+      <label><span>Erscheinungsjahr *</span><input type="number" name="year" min="1900" max="2100" required value="{{ request.form.get('year', video.year if video else '') }}"></label>
+      <label><span>Dauer</span><input name="duration" placeholder="z. B. 12:30" value="{{ request.form.get('duration', (video.duration_seconds|duration) if video else '') }}"><small>Sekunden, MM:SS oder HH:MM:SS; leer = ffprobe</small></label>
+      <label class="upload-field full"><span>MP4-Video {% if mode == 'new' %}*{% endif %}</span><input type="file" name="video_file" accept="video/mp4" {% if mode == 'new' %}required{% endif %}><small>Vorbereitet als MP4 mit H.264-Video und AAC-Audio.{% if video %} Leer lassen, um die vorhandene Datei zu behalten.{% endif %}</small></label>
+      <label class="upload-field full"><span>Vorschaubild</span><input type="file" name="thumbnail_file" accept="image/jpeg,image/png,image/webp"><small>Optional: JPG, PNG oder WebP. Ohne Datei erzeugt FFmpeg beim neuen Video automatisch ein Bild aus dem ersten Frame.{% if video and video.thumbnail_path %} Beim reinen Bearbeiten bleibt das vorhandene Bild erhalten.{% endif %}</small></label>
+      <div class="form-actions full"><button class="button primary" type="submit">{{ 'Hochladen' if mode == 'new' else 'Änderungen speichern' }}</button><a class="button ghost" href="{{ url_for('manage_videos') }}">Abbrechen</a></div>
+    </form>
+  </section>
+{% endblock %}

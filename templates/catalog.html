@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Videothek · Medienserver{% endblock %}
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Wissen auf Abruf</p>
+      <h1>Videothek</h1>
+      <p class="lead">Schulungsvideos nach Thema und Sprache finden.</p>
+    </div>
+    <div class="hero-actions">
+      <span class="count-badge">{{ videos|length }} Video{% if videos|length != 1 %}s{% endif %}</span>
+      <a class="button primary" href="{{ url_for('upload_video') }}">+ Video hochladen</a>
+    </div>
+  </section>
+
+  <form class="filter-panel" method="get" action="{{ url_for('catalog') }}">
+    <label class="search-field">
+      <span>Suche</span>
+      <input type="search" name="q" value="{{ filters.q }}" placeholder="Titel, Beschreibung oder Thema">
+    </label>
+    <label>
+      <span>Thema</span>
+      <select name="topic">
+        <option value="">Alle Themen</option>
+        {% for item in topics %}
+          <option value="{{ item }}" {% if filters.topic == item %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>Sprache</span>
+      <select name="language">
+        <option value="">Alle Sprachen</option>
+        <option value="DE" {% if filters.language == 'DE' %}selected{% endif %}>Deutsch</option>
+        <option value="EN" {% if filters.language == 'EN' %}selected{% endif %}>Englisch</option>
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="button primary" type="submit">Filtern</button>
+      {% if filters.q or filters.topic or filters.language %}
+        <a class="button ghost" href="{{ url_for('catalog') }}">Zurücksetzen</a>
+      {% endif %}
+    </div>
+  </form>
+
+  {% if videos %}
+    <div class="video-grid">
+      {% for video in videos %}
+        <article class="video-card">
+          <a class="card-image" href="{{ url_for('video_detail', video_id=video.id) }}">
+            {% if video.thumbnail_path %}
+              <img src="{{ url_for('serve_thumbnail', filename=video.thumbnail_path) }}" alt="Vorschaubild zu {{ video.title }}" loading="lazy">
+            {% else %}
+              <span class="placeholder-icon" aria-hidden="true">▶</span>
+              <span class="sr-only">Kein Vorschaubild vorhanden</span>
+            {% endif %}
+            <span class="duration-badge">{{ video.duration_seconds|duration }}</span>
+          </a>
+          <div class="card-body">
+            <div class="tag-row">
+              <span class="tag">{{ video.topic }}</span>
+              <span class="language-tag" lang="{{ video.language|lower }}">{{ video.language }}</span>
+            </div>
+            <h2><a href="{{ url_for('video_detail', video_id=video.id) }}">{{ video.title }}</a></h2>
+            <p>{{ video.description|truncate(110) if video.description else 'Keine Beschreibung vorhanden.' }}</p>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <section class="empty-state">
+      <span aria-hidden="true">⌕</span>
+      <h2>Keine Videos gefunden</h2>
+      <p>Passe Suche oder Filter an oder lade ein neues Video hoch.</p>
+      <a class="button primary empty-action" href="{{ url_for('upload_video') }}">Video hochladen</a>
+    </section>
+  {% endif %}
+{% endblock %}
