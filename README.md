@@ -1,6 +1,6 @@
 # Medienserver für Schulungsvideos
 
-Eine kleine deutschsprachige Videothek auf Basis von Flask und SQLite. Sie läuft lokal unter Windows und kann später hinter Nginx und Gunicorn auf einem Raspberry Pi betrieben werden. Videos werden nicht während der Wiedergabe umgewandelt. Erwartet werden vorbereitete MP4-Dateien mit H.264-Video und AAC-Audio.
+Eine kleine deutschsprachige Videothek auf Basis von Flask und JSON-Dokumenten. Sie läuft lokal unter Windows und kann später hinter Nginx und Gunicorn auf einem Raspberry Pi betrieben werden. Videos werden nicht während der Wiedergabe umgewandelt. Erwartet werden vorbereitete MP4-Dateien mit H.264-Video und AAC-Audio.
 
 ## Funktionen
 
@@ -8,7 +8,7 @@ Eine kleine deutschsprachige Videothek auf Basis von Flask und SQLite. Sie läuf
 - HTML5-Player mit Browser-Steuerung und zusätzlichen Sprüngen um 10 Sekunden
 - Offener Upload und eine Verwaltung zum Hinzufügen, Bearbeiten und Löschen von Videos
 - CSRF-Schutz, sichere Upload-Dateinamen und konfigurierbares Upload-Limit
-- SQLite für Metadaten; Videos und Vorschaubilder bleiben als Dateien in konfigurierbaren Ordnern
+- Eine eigene JSON-Datei pro Video mit Katalog- und technischen Metadaten; Videos und Vorschaubilder bleiben in getrennten Ordnern
 - HTTP-Range-Unterstützung im lokalen Flask-Betrieb; direkte Videoauslieferung durch Nginx auf dem Pi
 - Automatische Dauerermittlung mit `ffprobe` und Vorschaubild aus dem ersten Frame mit `ffmpeg`
 
@@ -31,7 +31,7 @@ Copy-Item .env.example .env
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Die Datenbank und Upload-Ordner werden beim ersten Start automatisch angelegt. Ein Benutzerkonto ist nicht erforderlich.
+Die JSON- und Upload-Ordner werden beim ersten Start automatisch angelegt. Ein Benutzerkonto ist nicht erforderlich.
 
 ## Lokal starten
 
@@ -49,9 +49,9 @@ Ein Video lädst du unter <http://127.0.0.1:5000/upload> hoch. Die Verwaltung li
 
 ## Erstes Video hinzufügen
 
-Im Repository liegt bewusst kein Testvideo. Wähle in der Navigation **Video hochladen**. Benötigt werden Titel, Thema, Sprache, Erscheinungsjahr und eine MP4-Datei. Ein eigenes Vorschaubild ist optional; mit installiertem FFmpeg erzeugt die Anwendung sonst automatisch eines aus dem ersten Frame.
+Im Repository liegt bewusst kein Testvideo. Wähle in der Navigation **Video hochladen**. Eingetragen werden nur Titel, Beschreibung, Thema und Sprache; dazu kommt die MP4-Datei. `ffprobe` liest Dauer, eingebettetes Erscheinungsjahr und sämtliche technischen Stream- und Containerdaten wie Codec, Auflösung, Bildrate, Audio und Bitrate aus. Fehlt eine Jahresangabe in der Datei, wird das aktuelle Uploadjahr verwendet. `ffmpeg` erzeugt das Vorschaubild aus dem ersten Frame.
 
-Auf diesem Entwicklungs-PC wurden `ffprobe` und `ffmpeg` nicht gefunden. Gib deshalb die Dauer beim Upload als Sekunden, `MM:SS` oder `HH:MM:SS` an und lade bei Bedarf ein Vorschaubild hoch. Alternativ installierst du FFmpeg und setzt bei Bedarf `FFPROBE_PATH` sowie `FFMPEG_PATH` in `.env` auf die vollständigen Pfade zu `ffprobe.exe` und `ffmpeg.exe`.
+Projektlokale Programme unter `tools/ffmpeg/bin/ffprobe.exe` und `tools/ffmpeg/bin/ffmpeg.exe` werden automatisch erkannt. Alternativ lassen sich `FFPROBE_PATH` und `FFMPEG_PATH` in `.env` setzen. Kann eines der drei automatischen Felder nicht erzeugt werden, wird der Upload mit einer verständlichen Fehlermeldung abgebrochen und die unvollständige Datei entfernt.
 
 Ein vorhandenes Video lässt sich auf einem leistungsfähigeren PC vor dem Upload passend vorbereiten:
 
@@ -80,7 +80,7 @@ Die Datei `.env.example` dokumentiert alle Einstellungen:
 | Variable | Standard | Bedeutung |
 | --- | --- | --- |
 | `SECRET_KEY` | Entwicklungswert | Signiert Sitzungs- und CSRF-Daten; unbedingt ändern |
-| `DATABASE_PATH` | `instance/medienserver.sqlite3` | SQLite-Datei |
+| `METADATA_DIR` | `data/videos` | Ordner mit einer JSON-Datei je Video |
 | `VIDEO_DIR` | `uploads/videos` | Ordner für MP4-Dateien |
 | `THUMBNAIL_DIR` | `uploads/thumbnails` | Ordner für Bilder |
 | `MAX_UPLOAD_MB` | `2048` | maximales Volumen einer Upload-Anfrage |
@@ -90,7 +90,7 @@ Die Datei `.env.example` dokumentiert alle Einstellungen:
 | `FLASK_PORT` | `5000` | lokaler Port |
 | `FLASK_DEBUG` | `0` | Debug-Modus; im Normalbetrieb ausgeschaltet lassen |
 
-Relative Pfade werden unabhängig vom aktuellen Terminalordner relativ zum Projektordner aufgelöst. `.env`, Datenbank, virtuelle Umgebung und Uploads stehen in `.gitignore`.
+Relative Pfade werden unabhängig vom aktuellen Terminalordner relativ zum Projektordner aufgelöst. `.env`, JSON-Metadaten, virtuelle Umgebung, lokale Programme und Uploads stehen in `.gitignore`.
 
 ## Automatisierte Tests
 
@@ -99,7 +99,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-Die Tests verwenden temporäre Dateien und eine eigene temporäre SQLite-Datenbank.
+Die Tests verwenden temporäre JSON- und Mediendateien. Wenn die projektlokalen FFmpeg-Programme vorhanden sind, erzeugt ein Integrationstest zusätzlich eine echte H.264/AAC-Datei und prüft Dauer, Jahr und Vorschaubild.
 
 ## Übertragung auf Raspberry Pi OS Lite
 
@@ -109,10 +109,10 @@ Pakete und Dienstbenutzer einrichten:
 
 ```bash
 sudo apt update
-sudo apt install -y python3-venv nginx ffmpeg git sqlite3
+sudo apt install -y python3-venv nginx ffmpeg git
 sudo adduser --system --group --home /opt/medienserver medienserver
 sudo git clone https://github.com/mikaeth95/lbs_pp_medienserver.git /opt/medienserver
-sudo mkdir -p /srv/medienserver-data/videos /srv/medienserver-data/thumbnails /srv/medienserver-data/db
+sudo mkdir -p /srv/medienserver-data/videos /srv/medienserver-data/thumbnails /srv/medienserver-data/metadata
 sudo chown -R medienserver:www-data /opt/medienserver /srv/medienserver-data
 sudo find /srv/medienserver-data -type d -exec chmod 2750 {} \;
 sudo find /srv/medienserver-data -type f -exec chmod 0640 {} \;
@@ -131,7 +131,7 @@ In `/opt/medienserver/.env` mindestens diese Werte setzen:
 
 ```dotenv
 SECRET_KEY=einen-langen-zufaelligen-wert-eintragen
-DATABASE_PATH=/srv/medienserver-data/db/medienserver.sqlite3
+METADATA_DIR=/srv/medienserver-data/metadata
 VIDEO_DIR=/srv/medienserver-data/videos
 THUMBNAIL_DIR=/srv/medienserver-data/thumbnails
 MAX_UPLOAD_MB=2048
@@ -167,7 +167,6 @@ Vor einer Aktualisierung zuerst sichern, dann Anwendung aktualisieren:
 
 ```bash
 sudo systemctl stop medienserver
-sudo sqlite3 /srv/medienserver-data/db/medienserver.sqlite3 ".backup '/srv/medienserver-data/db/medienserver-backup.sqlite3'"
 sudo tar -czf /srv/medienserver-backup-$(date +%F).tar.gz -C /srv medienserver-data
 cd /opt/medienserver
 sudo -u medienserver git pull --ff-only
@@ -175,10 +174,10 @@ sudo -u medienserver .venv/bin/pip install -r requirements.txt
 sudo systemctl start medienserver
 ```
 
-Kopiere Sicherungen regelmäßig auf einen anderen Datenträger oder Server und teste die Wiederherstellung. Eine vollständige Sicherung umfasst SQLite-Datenbank, Videos, Vorschaubilder und `.env`. Da das Stoppen während des Backups kurzzeitig die Verwaltung unterbricht, sollte es außerhalb der Nutzungszeit erfolgen; bereits von Nginx ausgelieferte Dateien sind davon unabhängig.
+Kopiere Sicherungen regelmäßig auf einen anderen Datenträger oder Server und teste die Wiederherstellung. Eine vollständige Sicherung umfasst JSON-Dokumente, Videos, Vorschaubilder und `.env`. Da das Stoppen während des Backups kurzzeitig die Verwaltung unterbricht, sollte es außerhalb der Nutzungszeit erfolgen; bereits von Nginx ausgelieferte Dateien sind davon unabhängig.
 
 ## Prüfstand
 
-Automatisiert geprüft werden Datenbankanlage, öffentlich erreichbarer Upload, Upload mit sicheren Dateinamen, automatische Übernahme von Dauer und Vorschaubild, Speicherung der Metadaten, kombinierte Suche/Filter, CSRF-Schutz, Löschen samt Dateien und eine echte HTTP-Byte-Range-Antwort (`206 Partial Content`).
+Automatisiert geprüft werden der dokumentbasierte JSON-Speicher, öffentlich erreichbarer Upload, sichere Dateinamen, automatische Übernahme von Dauer und Erscheinungsjahr, Erzeugung des Vorschaubilds, kombinierte Suche/Filter, Bearbeiten, CSRF-Schutz, vollständiges Löschen und eine echte HTTP-Byte-Range-Antwort (`206 Partial Content`).
 
 Noch auf echten Endgeräten zu prüfen sind Bild und Ton eines realen H.264/AAC-Videos, Springen und Vollbild auf den verwendeten Notebook-/Tablet-/Smartphone-Browsern, gleichzeitige Wiedergaben sowie Leistung und Nginx-Betrieb auf dem Raspberry Pi 3.

@@ -1,8 +1,11 @@
 import io
 import re
+import uuid
+from pathlib import Path
 
 import pytest
 
+import app as app_module
 from app import create_app
 
 
@@ -12,11 +15,12 @@ def app(tmp_path):
         {
             "TESTING": True,
             "SECRET_KEY": "test-secret",
-            "DATABASE": tmp_path / "test.sqlite3",
+            "METADATA_DIR": tmp_path / "metadata",
             "VIDEO_DIR": tmp_path / "videos",
             "THUMBNAIL_DIR": tmp_path / "thumbnails",
             "MAX_CONTENT_LENGTH": 1024 * 1024,
             "FFPROBE_PATH": "nicht-vorhandenes-ffprobe",
+            "FFMPEG_PATH": "nicht-vorhandenes-ffmpeg",
         }
     )
     yield application
@@ -34,7 +38,27 @@ def csrf_from(response) -> str:
 
 
 @pytest.fixture()
-def upload_video(client):
+def upload_video(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "probe_video_metadata",
+        lambda _path: {
+            "duration_seconds": 90,
+            "year": 2024,
+            "technical_metadata": {
+                "format": {"format_name": "mov,mp4"},
+                "streams": [{"codec_name": "h264", "width": 1280, "height": 720}],
+            },
+        },
+    )
+
+    def fake_thumbnail(video_path, directory):
+        filename = f"{Path(video_path).stem}-{uuid.uuid4().hex}.jpg"
+        Path(directory, filename).write_bytes(b"generated-thumbnail")
+        return filename
+
+    monkeypatch.setattr(app_module, "generate_thumbnail", fake_thumbnail)
+
     def upload(title="Excel Grundlagen", topic="Office", language="DE", filename="kurs.mp4"):
         token = csrf_from(client.get("/upload"))
         return client.post(
@@ -45,10 +69,7 @@ def upload_video(client):
                 "description": "Ein kurzer Einführungskurs",
                 "topic": topic,
                 "language": language,
-                "year": "2025",
-                "duration": "01:30",
                 "video_file": (io.BytesIO(b"0123456789abcdefghijklmnopqrstuvwxyz"), filename),
-                "thumbnail_file": (io.BytesIO(b"fake-image"), "vorschaubild.jpg"),
             },
             content_type="multipart/form-data",
             follow_redirects=True,

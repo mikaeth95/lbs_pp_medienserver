@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
-import sqlite3
 import subprocess
 import uuid
 from datetime import datetime
@@ -15,7 +15,6 @@ from flask import (
     Flask,
     abort,
     flash,
-    g,
     redirect,
     render_template,
     request,
@@ -30,8 +29,8 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 VIDEO_EXTENSIONS = {".mp4"}
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 LANGUAGES = {"DE": "Deutsch", "EN": "Englisch"}
+YEAR_PATTERN = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 
 
 def configured_path(value: str | Path) -> Path:
@@ -39,72 +38,54 @@ def configured_path(value: str | Path) -> Path:
     return path if path.is_absolute() else BASE_DIR / path
 
 
+def configured_executable(env_name: str, local_path: str, fallback: str) -> str:
+    value = os.getenv(env_name)
+    bundled = BASE_DIR / local_path
+    if (not value or value == fallback) and bundled.is_file():
+        return str(bundled)
+    if value:
+        path = Path(value).expanduser()
+        if not path.is_absolute() and ("/" in value or "\\" in value):
+            return str(BASE_DIR / path)
+        return str(path)
+    return fallback
+
+
 def create_app(test_config: dict[str, Any] | None = None) -> Flask:
-    app = Flask(__name__, instance_relative_config=True)
+    app = Flask(__name__)
     app.config.from_mapping(
         SECRET_KEY=os.getenv("SECRET_KEY", "lokaler-entwicklungsschluessel-bitte-aendern"),
-        DATABASE=configured_path(os.getenv("DATABASE_PATH", "instance/medienserver.sqlite3")),
+        METADATA_DIR=configured_path(os.getenv("METADATA_DIR", "data/videos")),
         VIDEO_DIR=configured_path(os.getenv("VIDEO_DIR", "uploads/videos")),
         THUMBNAIL_DIR=configured_path(os.getenv("THUMBNAIL_DIR", "uploads/thumbnails")),
         MAX_CONTENT_LENGTH=int(os.getenv("MAX_UPLOAD_MB", "2048")) * 1024 * 1024,
-        FFPROBE_PATH=os.getenv("FFPROBE_PATH", "ffprobe"),
-        FFMPEG_PATH=os.getenv("FFMPEG_PATH", "ffmpeg"),
+        FFPROBE_PATH=configured_executable(
+            "FFPROBE_PATH", "tools/ffmpeg/bin/ffprobe.exe", "ffprobe"
+        ),
+        FFMPEG_PATH=configured_executable(
+            "FFMPEG_PATH", "tools/ffmpeg/bin/ffmpeg.exe", "ffmpeg"
+        ),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
     )
     if test_config:
         app.config.update(test_config)
 
-    app.config["DATABASE"] = configured_path(app.config["DATABASE"])
-    app.config["VIDEO_DIR"] = configured_path(app.config["VIDEO_DIR"])
-    app.config["THUMBNAIL_DIR"] = configured_path(app.config["THUMBNAIL_DIR"])
-    Path(app.config["DATABASE"]).parent.mkdir(parents=True, exist_ok=True)
-    Path(app.config["VIDEO_DIR"]).mkdir(parents=True, exist_ok=True)
-    Path(app.config["THUMBNAIL_DIR"]).mkdir(parents=True, exist_ok=True)
+    for key in ("METADATA_DIR", "VIDEO_DIR", "THUMBNAIL_DIR"):
+        app.config[key] = configured_path(app.config[key])
+        Path(app.config[key]).mkdir(parents=True, exist_ok=True)
 
-    register_database(app)
     register_security(app)
     register_template_helpers(app)
     register_routes(app)
     register_errors(app)
-
-    with app.app_context():
-        init_db()
     return app
-
-
-def get_db() -> sqlite3.Connection:
-    if "db" not in g:
-        g.db = sqlite3.connect(
-            current_app_config("DATABASE"),
-            detect_types=sqlite3.PARSE_DECLTYPES,
-        )
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
-    return g.db
 
 
 def current_app_config(key: str) -> Any:
     from flask import current_app
 
     return current_app.config[key]
-
-
-def close_db(_error: BaseException | None = None) -> None:
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
-
-
-def init_db() -> None:
-    db = get_db()
-    schema = (BASE_DIR / "schema.sql").read_text(encoding="utf-8")
-    db.executescript(schema)
-    db.commit()
-
-
-def register_database(app: Flask) -> None:
-    app.teardown_appcontext(close_db)
 
 
 def csrf_token() -> str:
@@ -138,54 +119,119 @@ def register_template_helpers(app: Flask) -> None:
     app.jinja_env.globals["language_names"] = LANGUAGES
 
 
-def parse_duration(value: str) -> int | None:
-    value = value.strip()
-    if not value:
+def metadata_path(video_id: str) -> Path | None:
+    try:
+        safe_id = uuid.UUID(video_id).hex
+    except (ValueError, AttributeError):
         return None
-    if value.isdigit():
-        seconds = int(value)
-        return seconds if seconds > 0 else None
-    parts = value.split(":")
-    if len(parts) not in {2, 3} or not all(part.isdigit() for part in parts):
-        raise ValueError("Dauer als Sekunden, MM:SS oder HH:MM:SS eingeben.")
-    numbers = [int(part) for part in parts]
-    if numbers[-1] >= 60 or (len(numbers) == 3 and numbers[-2] >= 60):
-        raise ValueError("Minuten und Sekunden müssen kleiner als 60 sein.")
-    seconds = numbers[-1] + numbers[-2] * 60
-    if len(numbers) == 3:
-        seconds += numbers[0] * 3600
-    if seconds <= 0:
-        raise ValueError("Die Dauer muss größer als null sein.")
-    return seconds
+    return Path(current_app_config("METADATA_DIR")) / f"{safe_id}.json"
 
 
-def probe_duration(path: Path) -> int | None:
+def read_video(video_id: str) -> dict[str, Any] | None:
+    path = metadata_path(video_id)
+    if path is None or not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) and data.get("id") == path.stem else None
+
+
+def list_videos() -> list[dict[str, Any]]:
+    videos: list[dict[str, Any]] = []
+    for path in Path(current_app_config("METADATA_DIR")).glob("*.json"):
+        video = read_video(path.stem)
+        if video is not None:
+            videos.append(video)
+    videos.sort(key=lambda video: str(video.get("title", "")).casefold())
+    videos.sort(key=lambda video: str(video.get("created_at", "")), reverse=True)
+    return videos
+
+
+def write_video(video: dict[str, Any]) -> None:
+    path = metadata_path(str(video.get("id", "")))
+    if path is None:
+        raise ValueError("Ungültige Video-ID.")
+    temporary = path.with_name(f".{path.stem}-{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(video, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def delete_video_document(video_id: str) -> bool:
+    path = metadata_path(video_id)
+    if path is None or not path.is_file():
+        return False
+    path.unlink()
+    return True
+
+
+def extract_year(probe_data: dict[str, Any]) -> int:
+    tag_groups: list[dict[str, Any]] = []
+    format_tags = probe_data.get("format", {}).get("tags", {})
+    if isinstance(format_tags, dict):
+        tag_groups.append(format_tags)
+    for stream in probe_data.get("streams", []):
+        tags = stream.get("tags", {}) if isinstance(stream, dict) else {}
+        if isinstance(tags, dict):
+            tag_groups.append(tags)
+
+    maximum_year = datetime.now().year + 1
+    for tags in tag_groups:
+        lowered = {str(key).lower(): str(value) for key, value in tags.items()}
+        for key in ("date", "year", "creation_time"):
+            match = YEAR_PATTERN.search(lowered.get(key, ""))
+            if match:
+                year = int(match.group(1))
+                if 1900 <= year <= maximum_year:
+                    return year
+    return datetime.now().year
+
+
+def probe_video_metadata(path: Path) -> dict[str, Any] | None:
     try:
         result = subprocess.run(
             [
                 str(current_app_config("FFPROBE_PATH")),
                 "-v",
                 "error",
-                "-show_entries",
-                "format=duration",
+                "-show_format",
+                "-show_streams",
                 "-of",
                 "json",
                 str(path),
             ],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=30,
             check=True,
         )
-        duration = float(json.loads(result.stdout)["format"]["duration"])
-        return max(1, round(duration))
-    except (FileNotFoundError, subprocess.SubprocessError, KeyError, ValueError, json.JSONDecodeError):
+        probe_data = json.loads(result.stdout)
+        duration = max(1, round(float(probe_data["format"]["duration"])))
+        probe_data.get("format", {}).pop("filename", None)
+        return {
+            "duration_seconds": duration,
+            "year": extract_year(probe_data),
+            "technical_metadata": probe_data,
+        }
+    except (
+        FileNotFoundError,
+        subprocess.SubprocessError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
         return None
 
 
 def generate_thumbnail(video_path: Path, directory: Path) -> str | None:
-    """Speichert den ersten Videoframe als kompaktes JPEG, wenn FFmpeg verfügbar ist."""
-    filename = f"automatisch-{uuid.uuid4().hex}.jpg"
+    filename = f"{video_path.stem}-{uuid.uuid4().hex}.jpg"
     output_path = directory / filename
     try:
         subprocess.run(
@@ -219,13 +265,12 @@ def generate_thumbnail(video_path: Path, directory: Path) -> str | None:
     return None
 
 
-def save_upload(storage, directory: Path, allowed_extensions: set[str]) -> str:
+def save_upload(storage, directory: Path) -> str:
     original = secure_filename(storage.filename or "")
     suffix = Path(original).suffix.lower()
-    if not original or suffix not in allowed_extensions:
-        allowed = ", ".join(sorted(allowed_extensions))
-        raise ValueError(f"Nicht unterstützter Dateityp. Erlaubt: {allowed}")
-    stem = secure_filename(Path(original).stem)[:60] or "datei"
+    if not original or suffix not in VIDEO_EXTENSIONS:
+        raise ValueError("Nicht unterstützter Dateityp. Erlaubt: .mp4")
+    stem = secure_filename(Path(original).stem)[:60] or "video"
     filename = f"{stem}-{uuid.uuid4().hex}{suffix}"
     storage.save(directory / filename)
     return filename
@@ -242,33 +287,39 @@ def remove_file(directory: Path, filename: str | None) -> None:
         pass
 
 
-def form_values() -> dict[str, Any]:
+def form_values() -> dict[str, str]:
     title = request.form.get("title", "").strip()
     description = request.form.get("description", "").strip()
     topic = request.form.get("topic", "").strip()
     language = request.form.get("language", "").upper()
-    year_text = request.form.get("year", "").strip()
     if not title:
         raise ValueError("Ein Titel ist erforderlich.")
     if not topic:
         raise ValueError("Ein Thema ist erforderlich.")
     if language not in LANGUAGES:
         raise ValueError("Bitte Deutsch oder Englisch auswählen.")
-    try:
-        year = int(year_text)
-    except ValueError as error:
-        raise ValueError("Bitte ein gültiges Erscheinungsjahr eingeben.") from error
-    if year < 1900 or year > datetime.now().year + 1:
-        raise ValueError("Das Erscheinungsjahr liegt außerhalb des gültigen Bereichs.")
-    duration = parse_duration(request.form.get("duration", ""))
     return {
         "title": title,
         "description": description,
         "topic": topic,
         "language": language,
-        "year": year,
-        "duration_seconds": duration,
     }
+
+
+def analyze_upload(video_filename: str) -> tuple[dict[str, Any], str]:
+    video_path = Path(current_app_config("VIDEO_DIR")) / video_filename
+    automatic = probe_video_metadata(video_path)
+    if automatic is None:
+        raise ValueError(
+            "Dauer und Erscheinungsjahr konnten nicht gelesen werden. "
+            "Bitte eine gültige MP4-Datei hochladen und ffprobe prüfen."
+        )
+    thumbnail = generate_thumbnail(video_path, Path(current_app_config("THUMBNAIL_DIR")))
+    if thumbnail is None:
+        raise ValueError(
+            "Das Vorschaubild konnte nicht erzeugt werden. Bitte Videodatei und ffmpeg prüfen."
+        )
+    return automatic, thumbnail
 
 
 def register_routes(app: Flask) -> None:
@@ -277,32 +328,39 @@ def register_routes(app: Flask) -> None:
         query = request.args.get("q", "").strip()
         topic = request.args.get("topic", "").strip()
         language = request.args.get("language", "").upper().strip()
-        sql = "SELECT * FROM videos WHERE 1 = 1"
-        params: list[Any] = []
+        videos = list_videos()
+        topics = sorted(
+            {str(video.get("topic", "")) for video in videos if video.get("topic")},
+            key=str.casefold,
+        )
         if query:
-            sql += " AND (title LIKE ? OR description LIKE ? OR topic LIKE ?)"
-            search = f"%{query}%"
-            params.extend([search, search, search])
+            needle = query.casefold()
+            videos = [
+                video
+                for video in videos
+                if needle
+                in " ".join(
+                    [
+                        str(video.get("title", "")),
+                        str(video.get("description", "")),
+                        str(video.get("topic", "")),
+                    ]
+                ).casefold()
+            ]
         if topic:
-            sql += " AND topic = ?"
-            params.append(topic)
+            videos = [video for video in videos if video.get("topic") == topic]
         if language in LANGUAGES:
-            sql += " AND language = ?"
-            params.append(language)
-        sql += " ORDER BY created_at DESC, title COLLATE NOCASE"
-        db = get_db()
-        videos = db.execute(sql, params).fetchall()
-        topics = db.execute("SELECT DISTINCT topic FROM videos ORDER BY topic COLLATE NOCASE").fetchall()
+            videos = [video for video in videos if video.get("language") == language]
         return render_template(
             "catalog.html",
             videos=videos,
-            topics=[row["topic"] for row in topics],
+            topics=topics,
             filters={"q": query, "topic": topic, "language": language},
         )
 
-    @app.get("/video/<int:video_id>")
-    def video_detail(video_id: int):
-        video = get_db().execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
+    @app.get("/video/<video_id>")
+    def video_detail(video_id: str):
+        video = read_video(video_id)
         if video is None:
             abort(404)
         return render_template("video_detail.html", video=video)
@@ -326,10 +384,7 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/manage", strict_slashes=False)
     def manage_videos():
-        videos = get_db().execute(
-            "SELECT * FROM videos ORDER BY created_at DESC, title COLLATE NOCASE"
-        ).fetchall()
-        return render_template("manage/dashboard.html", videos=videos)
+        return render_template("manage/dashboard.html", videos=list_videos())
 
     @app.route("/upload", methods=["GET", "POST"])
     def upload_video():
@@ -341,115 +396,70 @@ def register_routes(app: Flask) -> None:
                 video_upload = request.files.get("video_file")
                 if video_upload is None or not video_upload.filename:
                     raise ValueError("Bitte eine MP4-Datei auswählen.")
-                saved_video = save_upload(video_upload, app.config["VIDEO_DIR"], VIDEO_EXTENSIONS)
-                thumbnail_upload = request.files.get("thumbnail_file")
-                if thumbnail_upload and thumbnail_upload.filename:
-                    saved_thumbnail = save_upload(
-                        thumbnail_upload, app.config["THUMBNAIL_DIR"], IMAGE_EXTENSIONS
-                    )
-                else:
-                    saved_thumbnail = generate_thumbnail(
-                        app.config["VIDEO_DIR"] / saved_video, app.config["THUMBNAIL_DIR"]
-                    )
-                if values["duration_seconds"] is None:
-                    values["duration_seconds"] = probe_duration(app.config["VIDEO_DIR"] / saved_video)
-                if values["duration_seconds"] is None:
-                    raise ValueError(
-                        "Die Dauer konnte nicht automatisch gelesen werden. Bitte manuell eingeben."
-                    )
-                db = get_db()
-                db.execute(
-                    """
-                    INSERT INTO videos
-                        (title, description, topic, language, duration_seconds, year,
-                         video_path, thumbnail_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        values["title"], values["description"], values["topic"],
-                        values["language"], values["duration_seconds"], values["year"],
-                        saved_video, saved_thumbnail,
-                    ),
-                )
-                db.commit()
-                flash("Video wurde hinzugefügt.", "success")
+                saved_video = save_upload(video_upload, app.config["VIDEO_DIR"])
+                automatic, saved_thumbnail = analyze_upload(saved_video)
+                video_id = uuid.uuid4().hex
+                timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+                video = {
+                    "id": video_id,
+                    **values,
+                    **automatic,
+                    "video_path": saved_video,
+                    "thumbnail_path": saved_thumbnail,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                }
+                write_video(video)
+                flash("Video und automatische Metadaten wurden gespeichert.", "success")
                 return redirect(url_for("manage_videos"))
-            except (ValueError, sqlite3.DatabaseError) as error:
+            except (ValueError, OSError) as error:
                 remove_file(app.config["VIDEO_DIR"], saved_video)
                 remove_file(app.config["THUMBNAIL_DIR"], saved_thumbnail)
                 flash(str(error), "error")
         return render_template("manage/video_form.html", video=None, mode="new")
 
-    @app.route("/manage/videos/<int:video_id>/edit", methods=["GET", "POST"])
-    def edit_video(video_id: int):
-        db = get_db()
-        video = db.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
+    @app.route("/manage/videos/<video_id>/edit", methods=["GET", "POST"])
+    def edit_video(video_id: str):
+        video = read_video(video_id)
         if video is None:
             abort(404)
         if request.method == "POST":
             new_video = None
             new_thumbnail = None
+            old_video = video.get("video_path")
+            old_thumbnail = video.get("thumbnail_path")
             try:
                 values = form_values()
-                video_upload = request.files.get("video_file")
-                thumbnail_upload = request.files.get("thumbnail_file")
-                final_video = video["video_path"]
-                final_thumbnail = video["thumbnail_path"]
-                if video_upload and video_upload.filename:
-                    new_video = save_upload(video_upload, app.config["VIDEO_DIR"], VIDEO_EXTENSIONS)
-                    final_video = new_video
-                    if values["duration_seconds"] is None:
-                        values["duration_seconds"] = probe_duration(app.config["VIDEO_DIR"] / new_video)
-                if thumbnail_upload and thumbnail_upload.filename:
-                    new_thumbnail = save_upload(
-                        thumbnail_upload, app.config["THUMBNAIL_DIR"], IMAGE_EXTENSIONS
-                    )
-                    final_thumbnail = new_thumbnail
-                elif new_video:
-                    new_thumbnail = generate_thumbnail(
-                        app.config["VIDEO_DIR"] / new_video, app.config["THUMBNAIL_DIR"]
-                    )
-                    if new_thumbnail:
-                        final_thumbnail = new_thumbnail
-                if values["duration_seconds"] is None:
-                    values["duration_seconds"] = video["duration_seconds"]
-                db.execute(
-                    """
-                    UPDATE videos SET title = ?, description = ?, topic = ?, language = ?,
-                        duration_seconds = ?, year = ?, video_path = ?, thumbnail_path = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (
-                        values["title"], values["description"], values["topic"],
-                        values["language"], values["duration_seconds"], values["year"],
-                        final_video, final_thumbnail, video_id,
-                    ),
-                )
-                db.commit()
+                replacement = request.files.get("video_file")
+                if replacement and replacement.filename:
+                    new_video = save_upload(replacement, app.config["VIDEO_DIR"])
+                    automatic, new_thumbnail = analyze_upload(new_video)
+                    values.update(automatic)
+                    values["video_path"] = new_video
+                    values["thumbnail_path"] = new_thumbnail
+                video.update(values)
+                video["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+                write_video(video)
                 if new_video:
-                    remove_file(app.config["VIDEO_DIR"], video["video_path"])
-                if new_thumbnail:
-                    remove_file(app.config["THUMBNAIL_DIR"], video["thumbnail_path"])
+                    remove_file(app.config["VIDEO_DIR"], old_video)
+                    remove_file(app.config["THUMBNAIL_DIR"], old_thumbnail)
                 flash("Video wurde aktualisiert.", "success")
                 return redirect(url_for("manage_videos"))
-            except (ValueError, sqlite3.DatabaseError) as error:
+            except (ValueError, OSError) as error:
                 remove_file(app.config["VIDEO_DIR"], new_video)
                 remove_file(app.config["THUMBNAIL_DIR"], new_thumbnail)
                 flash(str(error), "error")
         return render_template("manage/video_form.html", video=video, mode="edit")
 
-    @app.post("/manage/videos/<int:video_id>/delete")
-    def delete_video(video_id: int):
-        db = get_db()
-        video = db.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
+    @app.post("/manage/videos/<video_id>/delete")
+    def delete_video(video_id: str):
+        video = read_video(video_id)
         if video is None:
             abort(404)
-        db.execute("DELETE FROM videos WHERE id = ?", (video_id,))
-        db.commit()
-        remove_file(app.config["VIDEO_DIR"], video["video_path"])
-        remove_file(app.config["THUMBNAIL_DIR"], video["thumbnail_path"])
-        flash("Video und zugehörige Dateien wurden gelöscht.", "success")
+        delete_video_document(video_id)
+        remove_file(app.config["VIDEO_DIR"], video.get("video_path"))
+        remove_file(app.config["THUMBNAIL_DIR"], video.get("thumbnail_path"))
+        flash("Video, Vorschaubild und JSON-Metadaten wurden gelöscht.", "success")
         return redirect(url_for("manage_videos"))
 
 

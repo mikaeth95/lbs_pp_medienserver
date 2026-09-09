@@ -103,6 +103,8 @@ small { color: var(--muted); font-size: .78rem; font-weight: 500; }
 .video-form .full { grid-column: 1 / -1; }
 .upload-field { padding: 15px; border: 1px dashed #aebbd0; border-radius: 10px; background: #f8faff; }
 .upload-field input { padding: 8px; background: white; }
+.automatic-data { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 14px; border-radius: 10px; color: #344054; background: #eef4ff; font-size: .88rem; }
+.automatic-data strong { width: 100%; color: var(--primary-dark); }
 .flash-list { display: grid; gap: 8px; margin-bottom: 22px; }
 .flash { padding: 12px 15px; border: 1px solid; border-radius: 9px; }
 .flash-success { border-color: #a6e3cc; color: #155d47; background: #ecfdf5; }

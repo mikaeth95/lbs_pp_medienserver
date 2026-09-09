@@ -5,8 +5,10 @@ __pycache__/
 .pytest_cache/
 *.py[cod]
 instance/
+data/
 uploads/
 *.sqlite3
 *.db
 .coverage
 htmlcov/
+tools/

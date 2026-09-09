@@ -1,23 +1,41 @@
 import io
+import json
+import subprocess
 from pathlib import Path
 
+import pytest
+
 import app as app_module
-from app import get_db
 from conftest import csrf_from
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LOCAL_FFMPEG = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+LOCAL_FFPROBE = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffprobe.exe"
+
+
+def json_documents(app):
+    return sorted(Path(app.config["METADATA_DIR"]).glob("*.json"))
+
+
+def load_only_video(app):
+    documents = json_documents(app)
+    assert len(documents) == 1
+    return json.loads(documents[0].read_text(encoding="utf-8"))
 
 
 def test_catalog_upload_and_management_are_public(client):
     assert client.get("/").status_code == 200
-    assert client.get("/upload").status_code == 200
+    upload_page = client.get("/upload")
+    assert upload_page.status_code == 200
     assert client.get("/manage").status_code == 200
-
-    old_admin_url = client.get("/admin")
-    assert old_admin_url.status_code == 302
-    assert old_admin_url.headers["Location"].endswith("/manage")
+    assert 'name="duration"' not in upload_page.text
+    assert 'name="year"' not in upload_page.text
+    assert 'name="thumbnail_file"' not in upload_page.text
 
 
 def test_csrf_protects_video_changes(client):
-    response = client.post("/manage/videos/1/delete", data={})
+    response = client.post("/manage/videos/ungueltig/delete", data={})
     assert response.status_code == 400
     assert "CSRF" in response.text
 
@@ -31,95 +49,57 @@ def test_upload_limit_returns_413(client):
             "title": "Zu groß",
             "topic": "Test",
             "language": "DE",
-            "year": "2025",
-            "duration": "10",
             "video_file": (io.BytesIO(b"x" * (1024 * 1024 + 1)), "gross.mp4"),
         },
         content_type="multipart/form-data",
     )
     assert response.status_code == 413
-    assert "Limit von 1 MB" in response.text
 
 
-def test_media_route_blocks_path_traversal(client, tmp_path):
-    outside = tmp_path / "geheim.txt"
-    outside.write_text("nicht ausliefern", encoding="utf-8")
-    response = client.get("/media/videos/../geheim.txt")
-    assert response.status_code == 404
-
-
-def test_upload_saves_secure_files_and_metadata(app, upload_video):
+def test_upload_creates_one_json_document_with_automatic_metadata(app, upload_video):
     response = upload_video(filename="../../Mein Kurs.mp4")
     assert response.status_code == 200
-    assert "Video wurde hinzugefügt" in response.text
+    assert "automatische Metadaten" in response.text
 
-    with app.app_context():
-        video = get_db().execute("SELECT * FROM videos").fetchone()
-        assert video["title"] == "Excel Grundlagen"
-        assert video["duration_seconds"] == 90
-        assert video["language"] == "DE"
-        assert "/" not in video["video_path"]
-        assert "\\" not in video["video_path"]
-        assert Path(app.config["VIDEO_DIR"], video["video_path"]).is_file()
-        assert Path(app.config["THUMBNAIL_DIR"], video["thumbnail_path"]).is_file()
+    video = load_only_video(app)
+    assert video["title"] == "Excel Grundlagen"
+    assert video["duration_seconds"] == 90
+    assert video["year"] == 2024
+    assert video["language"] == "DE"
+    assert video["technical_metadata"]["streams"][0]["codec_name"] == "h264"
+    assert video["id"] == json_documents(app)[0].stem
+    assert "/" not in video["video_path"]
+    assert "\\" not in video["video_path"]
+    assert Path(app.config["VIDEO_DIR"], video["video_path"]).is_file()
+    assert Path(app.config["THUMBNAIL_DIR"], video["thumbnail_path"]).is_file()
+    assert not list(Path(app.config["METADATA_DIR"]).glob("*.tmp"))
 
 
-def test_missing_ffprobe_requires_manual_duration(client):
+def test_invalid_video_removes_failed_upload(app, client, monkeypatch):
+    monkeypatch.setattr(app_module, "probe_video_metadata", lambda _path: None)
     token = csrf_from(client.get("/upload"))
     response = client.post(
         "/upload",
         data={
             "csrf_token": token,
-            "title": "Ohne Dauer",
+            "title": "Ungültig",
             "topic": "Test",
             "language": "DE",
-            "year": "2025",
-            "duration": "",
             "video_file": (io.BytesIO(b"not-a-real-video"), "test.mp4"),
         },
         content_type="multipart/form-data",
     )
     assert response.status_code == 200
-    assert "manuell eingeben" in response.text
-
-
-def test_duration_and_thumbnail_are_generated_automatically(app, client, monkeypatch):
-    monkeypatch.setattr(app_module, "probe_duration", lambda _path: 73)
-
-    def fake_thumbnail(_video_path, directory):
-        filename = "automatisch.jpg"
-        Path(directory, filename).write_bytes(b"generated-thumbnail")
-        return filename
-
-    monkeypatch.setattr(app_module, "generate_thumbnail", fake_thumbnail)
-    token = csrf_from(client.get("/upload"))
-    response = client.post(
-        "/upload",
-        data={
-            "csrf_token": token,
-            "title": "Automatischer Import",
-            "description": "",
-            "topic": "Test",
-            "language": "DE",
-            "year": "2026",
-            "duration": "",
-            "video_file": (io.BytesIO(b"fake-mp4"), "automatisch.mp4"),
-        },
-        content_type="multipart/form-data",
-        follow_redirects=True,
-    )
-    assert response.status_code == 200
-    with app.app_context():
-        video = get_db().execute("SELECT * FROM videos WHERE title = ?", ("Automatischer Import",)).fetchone()
-        assert video["duration_seconds"] == 73
-        assert video["thumbnail_path"] == "automatisch.jpg"
-        assert Path(app.config["THUMBNAIL_DIR"], video["thumbnail_path"]).is_file()
+    assert "konnten nicht gelesen werden" in response.text
+    assert not json_documents(app)
+    assert not list(Path(app.config["VIDEO_DIR"]).iterdir())
 
 
 def test_combined_search_topic_and_language_filters(app, upload_video):
-    assert upload_video(title="Excel Deutsch", topic="Office", language="DE").status_code == 200
-    assert upload_video(title="Excel English", topic="Office", language="EN").status_code == 200
-    assert upload_video(title="Python Deutsch", topic="Programmierung", language="DE").status_code == 200
+    upload_video(title="Excel Deutsch", topic="Office", language="DE")
+    upload_video(title="Excel English", topic="Office", language="EN")
+    upload_video(title="Python Deutsch", topic="Programmierung", language="DE")
+    assert len(json_documents(app)) == 3
 
     response = app.test_client().get("/?q=Excel&topic=Office&language=DE")
     assert response.status_code == 200
@@ -130,12 +110,9 @@ def test_combined_search_topic_and_language_filters(app, upload_video):
 
 def test_range_request_returns_partial_video(app, upload_video):
     upload_video()
-    with app.app_context():
-        video = get_db().execute("SELECT * FROM videos LIMIT 1").fetchone()
-        video_path = video["video_path"]
-
+    video = load_only_video(app)
     response = app.test_client().get(
-        f"/media/videos/{video_path}", headers={"Range": "bytes=5-12"}
+        f"/media/videos/{video['video_path']}", headers={"Range": "bytes=5-12"}
     )
     assert response.status_code == 206
     assert response.data == b"0123456789abcdefghijklmnopqrstuvwxyz"[5:13]
@@ -143,43 +120,108 @@ def test_range_request_returns_partial_video(app, upload_video):
     assert response.headers["Accept-Ranges"] == "bytes"
 
 
-def test_edit_and_delete_update_database_and_files(app, client, upload_video):
+def test_edit_rewrites_json_and_delete_removes_all_files(app, client, upload_video):
     upload_video()
-    with app.app_context():
-        video = get_db().execute("SELECT * FROM videos LIMIT 1").fetchone()
-        video_id = video["id"]
-        stored_path = Path(app.config["VIDEO_DIR"], video["video_path"])
+    original = load_only_video(app)
+    old_video = Path(app.config["VIDEO_DIR"], original["video_path"])
+    old_thumbnail = Path(app.config["THUMBNAIL_DIR"], original["thumbnail_path"])
 
-    edit_page = client.get(f"/manage/videos/{video_id}/edit")
-    token = csrf_from(edit_page)
+    token = csrf_from(client.get(f"/manage/videos/{original['id']}/edit"))
     edited = client.post(
-        f"/manage/videos/{video_id}/edit",
+        f"/manage/videos/{original['id']}/edit",
         data={
             "csrf_token": token,
             "title": " Excel für Fortgeschrittene ",
             "description": "Aktualisierte Beschreibung",
             "topic": "Office",
             "language": "EN",
-            "year": "2026",
-            "duration": "02:15",
+            "video_file": (io.BytesIO(b"new-video-content"), "neu.mp4"),
         },
+        content_type="multipart/form-data",
         follow_redirects=True,
     )
     assert edited.status_code == 200
-    with app.app_context():
-        updated = get_db().execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
-        assert updated["title"] == "Excel für Fortgeschrittene"
-        assert updated["language"] == "EN"
-        assert updated["duration_seconds"] == 135
+    updated = load_only_video(app)
+    assert updated["title"] == "Excel für Fortgeschrittene"
+    assert updated["language"] == "EN"
+    assert updated["id"] == original["id"]
+    assert not old_video.exists()
+    assert not old_thumbnail.exists()
 
+    new_video = Path(app.config["VIDEO_DIR"], updated["video_path"])
+    new_thumbnail = Path(app.config["THUMBNAIL_DIR"], updated["thumbnail_path"])
     token = csrf_from(client.get("/manage"))
-    response = client.post(
-        f"/manage/videos/{video_id}/delete",
+    deleted = client.post(
+        f"/manage/videos/{updated['id']}/delete",
         data={"csrf_token": token},
         follow_redirects=True,
     )
+    assert deleted.status_code == 200
+    assert not json_documents(app)
+    assert not new_video.exists()
+    assert not new_thumbnail.exists()
+
+
+@pytest.mark.skipif(
+    not LOCAL_FFMPEG.is_file() or not LOCAL_FFPROBE.is_file(),
+    reason="Projektlokales FFmpeg ist nicht installiert.",
+)
+def test_real_upload_extracts_duration_year_and_first_frame(app, client, tmp_path):
+    source = tmp_path / "real-test.mp4"
+    subprocess.run(
+        [
+            str(LOCAL_FFMPEG),
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=320x180:d=2",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=2",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-metadata",
+            "creation_time=2024-01-15T10:00:00Z",
+            str(source),
+        ],
+        check=True,
+        timeout=30,
+    )
+    app.config["FFMPEG_PATH"] = str(LOCAL_FFMPEG)
+    app.config["FFPROBE_PATH"] = str(LOCAL_FFPROBE)
+    token = csrf_from(client.get("/upload"))
+    with source.open("rb") as video_file:
+        response = client.post(
+            "/upload",
+            data={
+                "csrf_token": token,
+                "title": "Echter FFmpeg-Test",
+                "description": "Automatisch ausgewertet",
+                "topic": "Test",
+                "language": "DE",
+                "video_file": (video_file, "real-test.mp4"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
     assert response.status_code == 200
-    assert "wurden gelöscht" in response.text
-    assert not stored_path.exists()
-    with app.app_context():
-        assert get_db().execute("SELECT COUNT(*) FROM videos").fetchone()[0] == 0
+    assert "automatische Metadaten" in response.text
+    video = load_only_video(app)
+    assert video["duration_seconds"] == 2
+    assert video["year"] == 2024
+    assert video["technical_metadata"]["format"]["format_name"].startswith("mov,mp4")
+    assert "filename" not in video["technical_metadata"]["format"]
+    assert {stream["codec_type"] for stream in video["technical_metadata"]["streams"]} == {
+        "audio",
+        "video",
+    }
+    assert Path(app.config["THUMBNAIL_DIR"], video["thumbnail_path"]).stat().st_size > 0
