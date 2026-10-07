@@ -1,0 +1,16 @@
+.git
+.venv
+venv
+__pycache__
+.pytest_cache
+.env
+.env.*
+data
+uploads
+instance
+tools
+tests
+tech_documentation
+*.xlsx
+*.sqlite3
+*.db

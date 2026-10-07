@@ -1,6 +1,6 @@
 # Medienserver für Schulungsvideos
 
-Eine kleine deutschsprachige Videothek auf Basis von Flask und JSON-Dokumenten. Sie läuft lokal unter Windows und kann später hinter Nginx und Gunicorn auf einem Raspberry Pi betrieben werden. Videos werden nicht während der Wiedergabe umgewandelt. Erwartet werden vorbereitete MP4-Dateien mit H.264-Video und AAC-Audio.
+Eine kleine deutschsprachige Videothek auf Basis von Flask und JSON-Dokumenten. Sie läuft lokal unter Windows und mit Docker Compose hinter Nginx und Gunicorn auf einem Raspberry Pi. Videos werden nicht während der Wiedergabe umgewandelt. Erwartet werden vorbereitete MP4-Dateien mit H.264-Video und AAC-Audio.
 
 ## Funktionen
 
@@ -38,12 +38,18 @@ Die JSON- und Upload-Ordner werden beim ersten Start automatisch angelegt. Ein B
 Mit aktivierter virtueller Umgebung:
 
 ```powershell
-python app.py
+python main.py
 ```
 
 Die Anwendung ist standardmäßig nur auf diesem PC erreichbar:
 
 <http://127.0.0.1:5000>
+
+Die Datei `main.py` enthält oben die Einstellung `RASPBERRY_MODE`. Mit
+`RASPBERRY_MODE = False` läuft die Anwendung wie bisher nur auf dem lokalen
+Computer. Mit `RASPBERRY_MODE = True` oder der Umgebungsvariable
+`RASPBERRY_MODE=1` lauscht der eingebaute Entwicklungsserver auf allen
+Netzwerkschnittstellen und ist im lokalen Netzwerk erreichbar.
 
 Ein Video lädst du unter <http://127.0.0.1:5000/upload> hoch. Die Verwaltung liegt unter <http://127.0.0.1:5000/manage>.
 
@@ -65,9 +71,9 @@ Die Anwendung prüft die Dateiendung, wandelt das Video aber absichtlich nicht u
 
 PC und Smartphone müssen im selben vertrauenswürdigen WLAN/LAN sein.
 
-1. Setze in `.env` den Wert `FLASK_HOST=0.0.0.0`.
+1. Setze in `main.py` den Wert `RASPBERRY_MODE = True`.
 2. Ermittle mit `ipconfig` die IPv4-Adresse des PCs, zum Beispiel `192.168.1.25`.
-3. Starte die Anwendung mit `python app.py`.
+3. Starte die Anwendung mit `python main.py`.
 4. Erlaube bei Nachfrage Python für private Netzwerke in der Windows-Firewall. Falls keine Nachfrage erscheint, erstelle dort eine eingehende TCP-Regel für Port 5000.
 5. Öffne auf dem Smartphone `http://192.168.1.25:5000`.
 
@@ -101,7 +107,55 @@ pytest -q
 
 Die Tests verwenden temporäre JSON- und Mediendateien. Wenn die projektlokalen FFmpeg-Programme vorhanden sind, erzeugt ein Integrationstest zusätzlich eine echte H.264/AAC-Datei und prüft Dauer, Jahr und Vorschaubild.
 
-## Übertragung auf Raspberry Pi OS Lite
+## Raspberry Pi mit Docker Compose (Produktion)
+
+Diese Variante passt zum Benutzer `pi`, zur Adresse `10.0.13.3` und zum bereits
+angelegten Ordner `/home/pi/medienserver`. Der Pi benötigt Docker Engine mit dem
+Compose-Plugin; prüfe `sudo docker compose version`. Falls es fehlt, installiere
+es nach der [Docker-Anleitung für Debian ARM64](https://docs.docker.com/engine/install/debian/).
+Port 80 muss frei sein; den alten Nginx-/systemd-Dienst nicht gleichzeitig starten.
+
+Kopiere aus diesem Projektordner in **PowerShell** die für Docker benötigten
+Dateien auf den Pi:
+
+```powershell
+scp .\app.py .\main.py .\requirements.txt .\Dockerfile .\compose.yaml .\.dockerignore pi@10.0.13.3:/home/pi/medienserver/
+scp -r .\templates .\static .\deployment pi@10.0.13.3:/home/pi/medienserver/
+```
+
+Danach auf dem **Pi**:
+
+```bash
+cd /home/pi/medienserver
+mkdir -p data/videos uploads/videos uploads/thumbnails
+python3 -c 'import secrets; print("SECRET_KEY=" + secrets.token_hex(32))' > .env
+printf 'PUID=%s\nPGID=%s\n' "$(id -u)" "$(id -g)" >> .env
+chmod 600 .env
+sudo systemctl enable --now docker
+sudo docker compose config --quiet
+sudo docker compose up --build -d
+sudo docker compose ps
+```
+
+Rufe <http://10.0.13.3/> auf. Für Fehlerdetails:
+`sudo docker compose logs --tail=100 app nginx`. Uploads und JSON-Metadaten
+bleiben in `uploads/` und `data/`, auch nach einem Container-Neustart. Sichere
+beide Ordner sowie `.env` regelmäßig. Mit `restart: unless-stopped` startet
+Docker die Container nach einem Neustart des Pi wieder, solange sie nicht
+absichtlich gestoppt wurden. Für Updates Dateien erneut übertragen und
+`sudo docker compose up --build -d` ausführen.
+
+Im Compose-Betrieb startet Gunicorn die Flask-App und Nginx veröffentlicht sie
+im LAN. `main.py` und sein Schalter `RASPBERRY_MODE` werden dabei nicht benutzt.
+Bei einer separaten Python-Installation lässt sich auf dem Pi mit
+`RASPBERRY_MODE=1 python main.py` der eingebaute Flask-Server im LAN testen.
+Der Upload ist ohne Anmeldung
+erreichbar; verwende die Compose-Variante nur im vertrauenswürdigen LAN. Nginx
+und Flask begrenzen Uploads standardmäßig auf 2048 MB. Wer das Limit ändert,
+muss `MAX_UPLOAD_MB` in `.env` und `client_max_body_size` in
+`deployment/nginx-compose.conf` gemeinsam anpassen.
+
+## Alternative: Raspberry Pi OS Lite ohne Docker
 
 Die folgenden Befehle gehen von Raspberry Pi OS Lite (64 Bit), dem Benutzer `medienserver`, dem Programmordner `/opt/medienserver` und persistenten Daten unter `/srv/medienserver-data` aus. Für einen Pi 3 sind vorbereitete, maßvoll aufgelöste Videos sinnvoll; der Pi transkodiert nicht.
 
