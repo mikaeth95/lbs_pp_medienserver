@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Fehler {{ code }} · Medienserver{% endblock %}
+{% block content %}
+  <section class="empty-state error-page">
+    <span>{{ code }}</span>
+    <h1>Da ist etwas schiefgegangen</h1>
+    <p>{{ message }}</p>
+    <a class="button primary" href="{{ url_for('catalog') }}">Zur Videothek</a>
+  </section>
+{% endblock %}
