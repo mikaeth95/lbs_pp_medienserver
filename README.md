@@ -6,10 +6,11 @@ Eine kleine deutschsprachige Videothek auf Basis von Flask und JSON-Dokumenten. 
 
 - Responsive Videothek mit Suche sowie kombinierbaren Filtern für Thema und Sprache
 - HTML5-Player mit Browser-Steuerung und zusätzlichen Sprüngen um 10 Sekunden
-- Offener Upload und eine Verwaltung zum Hinzufügen, Bearbeiten und Löschen von Videos
-- CSRF-Schutz, sichere Upload-Dateinamen und konfigurierbares Upload-Limit
-- Eine eigene JSON-Datei pro Video mit Katalog- und technischen Metadaten; Videos und Vorschaubilder bleiben in getrennten Ordnern
-- HTTP-Range-Unterstützung im lokalen Flask-Betrieb; direkte Videoauslieferung durch Nginx auf dem Pi
+- Anmeldung mit drei Rollen: Administrator, Trainer und Teilnehmer (siehe [Benutzer und Rollen](#benutzer-und-rollen))
+- Upload und Verwaltung zum Hinzufügen, Bearbeiten und Löschen von Videos für Trainer und Administratoren
+- CSRF-Schutz, gehashte Passwörter, sichere Upload-Dateinamen und konfigurierbares Upload-Limit
+- Eine eigene JSON-Datei pro Video und pro Benutzer; Videos und Vorschaubilder bleiben in getrennten Ordnern
+- HTTP-Range-Unterstützung im lokalen Flask-Betrieb; auf dem Pi prüft Flask die Anmeldung und Nginx liefert die Videos aus
 - Automatische Dauerermittlung mit `ffprobe` und Vorschaubild aus dem ersten Frame mit `ffmpeg`
 
 ## Windows: Einrichtung in PowerShell
@@ -31,7 +32,11 @@ Copy-Item .env.example .env
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Die JSON- und Upload-Ordner werden beim ersten Start automatisch angelegt. Ein Benutzerkonto ist nicht erforderlich.
+Die JSON- und Upload-Ordner werden beim ersten Start automatisch angelegt. Lege danach den ersten Administrator an; das Passwort wird zweimal abgefragt:
+
+```powershell
+flask --app app create-user admin
+```
 
 ## Lokal starten
 
@@ -51,7 +56,25 @@ Computer. Mit `RASPBERRY_MODE = True` oder der Umgebungsvariable
 `RASPBERRY_MODE=1` lauscht der eingebaute Entwicklungsserver auf allen
 Netzwerkschnittstellen und ist im lokalen Netzwerk erreichbar.
 
-Ein Video lädst du unter <http://127.0.0.1:5000/upload> hoch. Die Verwaltung liegt unter <http://127.0.0.1:5000/manage>.
+Nach der Anmeldung lädst du als Trainer oder Administrator ein Video unter <http://127.0.0.1:5000/upload> hoch. Die Verwaltung liegt unter <http://127.0.0.1:5000/manage>, die Benutzerverwaltung für Administratoren unter <http://127.0.0.1:5000/users>.
+
+## Benutzer und Rollen
+
+| Aktion | Administrator | Trainer | Teilnehmer |
+| --- | :-: | :-: | :-: |
+| Videos ansehen und durchsuchen | ✅ | ✅ | ✅ |
+| Videos hochladen | ✅ | ✅ | ❌ |
+| Eigene Videos bearbeiten und löschen | ✅ | ✅ | ❌ |
+| Fremde Videos bearbeiten und löschen, Besitzer ändern | ✅ | ❌ | ❌ |
+| Benutzer anlegen, sperren, löschen, Rollen vergeben, Passwort zurücksetzen | ✅ | ❌ | ❌ |
+| Eigenes Passwort ändern (**Mein Konto**) | ✅ | ✅ | ✅ |
+
+- Ohne Anmeldung sind nur Anmelden und Registrieren erreichbar, auch Video- und Bilddateien sind geschützt.
+- Bei der Registrierung wählt man **Teilnehmer** oder **Trainer**. Teilnehmer können sofort loslegen. Ein Trainer-Konto startet als Teilnehmer mit dem Vermerk „Trainer angefragt“; ein Administrator schaltet es unter **Benutzer → Offene Trainer-Anfragen** frei oder lehnt ab. Mit `ALLOW_REGISTRATION=0` legt nur der Administrator Konten an.
+- Jedes Video speichert im Feld `owner`, wer es hochgeladen hat. Videos ohne Besitzer, etwa ältere Uploads oder Videos gelöschter Benutzer, verwaltet nur ein Administrator; er kann sie beim Bearbeiten einem Trainer zuweisen.
+- Ein Administrator kann die eigene Rolle nicht ändern, sich nicht sperren und nicht löschen. So bleibt immer ein Administrator übrig.
+- Passwörter werden nur als Hash gespeichert. Ein neues Passwort meldet alle anderen Sitzungen dieses Benutzers ab.
+- Passwort vergessen: Ein Administrator setzt es in der Benutzerverwaltung neu. Für den Administrator selbst gibt es `flask --app app set-password admin`.
 
 ## Erstes Video hinzufügen
 
@@ -77,7 +100,7 @@ PC und Smartphone müssen im selben vertrauenswürdigen WLAN/LAN sein.
 4. Erlaube bei Nachfrage Python für private Netzwerke in der Windows-Firewall. Falls keine Nachfrage erscheint, erstelle dort eine eingehende TCP-Regel für Port 5000.
 5. Öffne auf dem Smartphone `http://192.168.1.25:5000`.
 
-Der eingebaute Flask-Server ist für Entwicklung und einen kurzen Gerätetest gedacht. Da die Verwaltung bewusst keine Anmeldung verlangt, kann jedes Gerät mit Zugriff auf die Anwendung Videos hochladen, bearbeiten und löschen. Verwende sie deshalb nur in einem vertrauenswürdigen lokalen Netz.
+Der eingebaute Flask-Server ist für Entwicklung und einen kurzen Gerätetest gedacht. Die Verbindung ist unverschlüsselt (HTTP); verwende die Anwendung deshalb nur in einem vertrauenswürdigen lokalen Netz.
 
 ## Konfiguration
 
@@ -87,9 +110,12 @@ Die Datei `.env.example` dokumentiert alle Einstellungen:
 | --- | --- | --- |
 | `SECRET_KEY` | Entwicklungswert | Signiert Sitzungs- und CSRF-Daten; unbedingt ändern |
 | `METADATA_DIR` | `data/videos` | Ordner mit einer JSON-Datei je Video |
+| `USER_DIR` | `data/users` | Ordner mit einer JSON-Datei je Benutzer |
 | `VIDEO_DIR` | `uploads/videos` | Ordner für MP4-Dateien |
 | `THUMBNAIL_DIR` | `uploads/thumbnails` | Ordner für Bilder |
 | `MAX_UPLOAD_MB` | `2048` | maximales Volumen einer Upload-Anfrage |
+| `ALLOW_REGISTRATION` | `1` | `1` erlaubt Selbstregistrierung als Teilnehmer, `0` schaltet sie ab |
+| `MEDIA_X_ACCEL` | `0` | `1` nur hinter Nginx mit `deployment/`-Konfiguration: Flask prüft die Anmeldung, Nginx liefert die Datei |
 | `FFPROBE_PATH` | `ffprobe` | Programm/Pfad für die Dauerermittlung |
 | `FFMPEG_PATH` | `ffmpeg` | Programm/Pfad für ein Vorschaubild aus dem ersten Frame |
 | `FLASK_HOST` | `127.0.0.1` | `0.0.0.0` erlaubt LAN-Zugriff |
@@ -127,7 +153,7 @@ Danach auf dem **Pi**:
 
 ```bash
 cd /home/pi/medienserver
-mkdir -p data/videos uploads/videos uploads/thumbnails
+mkdir -p data/videos data/users uploads/videos uploads/thumbnails
 python3 -c 'import secrets; print("SECRET_KEY=" + secrets.token_hex(32))' > .env
 printf 'PUID=%s\nPGID=%s\n' "$(id -u)" "$(id -g)" >> .env
 chmod 600 .env
@@ -135,6 +161,7 @@ sudo systemctl enable --now docker
 sudo docker compose config --quiet
 sudo docker compose up --build -d
 sudo docker compose ps
+sudo docker compose exec app flask --app app create-user admin
 ```
 
 Rufe <http://10.0.13.3/> auf. Für Fehlerdetails:
@@ -145,12 +172,24 @@ Docker die Container nach einem Neustart des Pi wieder, solange sie nicht
 absichtlich gestoppt wurden. Für Updates Dateien erneut übertragen und
 `sudo docker compose up --build -d` ausführen.
 
+**Einmalig beim Update auf die Version mit Benutzeranmeldung** (auf dem Pi, als Benutzer `pi`).
+Den Ordner unbedingt *vor* dem Start anlegen, sonst erstellt Docker ihn mit Besitzer `root`, und
+die App kann keine Benutzer speichern:
+
+```bash
+cd /home/pi/medienserver
+mkdir -p data/users
+sudo docker compose up --build -d
+sudo docker compose exec app flask --app app create-user admin
+```
+
+Falls `data/users` schon `root` gehört: `sudo chown "$(id -u):$(id -g)" data/users`.
+
 Im Compose-Betrieb startet Gunicorn die Flask-App und Nginx veröffentlicht sie
 im LAN. `main.py` und sein Schalter `RASPBERRY_MODE` werden dabei nicht benutzt.
 Bei einer separaten Python-Installation lässt sich auf dem Pi mit
 `RASPBERRY_MODE=1 python main.py` der eingebaute Flask-Server im LAN testen.
-Der Upload ist ohne Anmeldung
-erreichbar; verwende die Compose-Variante nur im vertrauenswürdigen LAN. Nginx
+Die Verbindung ist unverschlüsselt (HTTP); verwende die Compose-Variante nur im vertrauenswürdigen LAN. Nginx
 und Flask begrenzen Uploads standardmäßig auf 2048 MB. Wer das Limit ändert,
 muss `MAX_UPLOAD_MB` in `.env` und `client_max_body_size` in
 `deployment/nginx-compose.conf` gemeinsam anpassen.
@@ -166,7 +205,7 @@ sudo apt update
 sudo apt install -y python3-venv nginx ffmpeg git
 sudo adduser --system --group --home /opt/medienserver medienserver
 sudo git clone https://github.com/mikaeth95/lbs_pp_medienserver.git /opt/medienserver
-sudo mkdir -p /srv/medienserver-data/videos /srv/medienserver-data/thumbnails /srv/medienserver-data/metadata
+sudo mkdir -p /srv/medienserver-data/videos /srv/medienserver-data/thumbnails /srv/medienserver-data/metadata /srv/medienserver-data/users
 sudo chown -R medienserver:www-data /opt/medienserver /srv/medienserver-data
 sudo find /srv/medienserver-data -type d -exec chmod 2750 {} \;
 sudo find /srv/medienserver-data -type f -exec chmod 0640 {} \;
@@ -186,6 +225,8 @@ In `/opt/medienserver/.env` mindestens diese Werte setzen:
 ```dotenv
 SECRET_KEY=einen-langen-zufaelligen-wert-eintragen
 METADATA_DIR=/srv/medienserver-data/metadata
+USER_DIR=/srv/medienserver-data/users
+MEDIA_X_ACCEL=1
 VIDEO_DIR=/srv/medienserver-data/videos
 THUMBNAIL_DIR=/srv/medienserver-data/thumbnails
 MAX_UPLOAD_MB=2048
@@ -204,6 +245,7 @@ sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl daemon-reload
 sudo systemctl enable --now medienserver nginx
+cd /opt/medienserver && sudo -u medienserver .venv/bin/flask --app app create-user admin
 ```
 
 Status und Protokoll prüfen:
@@ -213,7 +255,7 @@ systemctl status medienserver --no-pager
 journalctl -u medienserver -n 100 --no-pager
 ```
 
-Nginx liefert `/media/videos/` direkt aus und unterstützt dabei Byte-Range-Anfragen. Katalog, Upload und Verwaltung gehen über Gunicorn an Flask. Passe `server_name` in `deployment/nginx-medienserver.conf` an den vereinbarten Hostnamen oder die feste IP-Adresse an.
+Anfragen an `/media/videos/` prüft zuerst Flask auf eine gültige Anmeldung und antwortet mit `X-Accel-Redirect`. Danach liefert Nginx die Datei aus der internen Location `/_protected/videos/` aus und unterstützt dabei Byte-Range-Anfragen. Katalog, Upload und Verwaltung gehen über Gunicorn an Flask. Passe `server_name` in `deployment/nginx-medienserver.conf` an den vereinbarten Hostnamen oder die feste IP-Adresse an.
 
 ## Aktualisierung und Datensicherung auf dem Pi
 
@@ -228,10 +270,24 @@ sudo -u medienserver .venv/bin/pip install -r requirements.txt
 sudo systemctl start medienserver
 ```
 
+**Einmalig beim Update auf die Version mit Benutzeranmeldung:** Nginx muss die neue Konfiguration
+bekommen, sonst bleiben Videos ohne Anmeldung abrufbar. Außerdem in `/opt/medienserver/.env` die Zeilen
+`USER_DIR=/srv/medienserver-data/users` und `MEDIA_X_ACCEL=1` ergänzen. Danach:
+
+```bash
+sudo mkdir -p /srv/medienserver-data/users
+sudo chown medienserver:www-data /srv/medienserver-data/users
+sudo chmod 2750 /srv/medienserver-data/users
+sudo cp /opt/medienserver/deployment/nginx-medienserver.conf /etc/nginx/sites-available/medienserver
+sudo nginx -t && sudo systemctl reload nginx
+sudo systemctl restart medienserver
+cd /opt/medienserver && sudo -u medienserver .venv/bin/flask --app app create-user admin
+```
+
 Kopiere Sicherungen regelmäßig auf einen anderen Datenträger oder Server und teste die Wiederherstellung. Eine vollständige Sicherung umfasst JSON-Dokumente, Videos, Vorschaubilder und `.env`. Da das Stoppen während des Backups kurzzeitig die Verwaltung unterbricht, sollte es außerhalb der Nutzungszeit erfolgen; bereits von Nginx ausgelieferte Dateien sind davon unabhängig.
 
 ## Prüfstand
 
-Automatisiert geprüft werden der dokumentbasierte JSON-Speicher, öffentlich erreichbarer Upload, sichere Dateinamen, automatische Übernahme von Dauer und Erscheinungsjahr, Erzeugung des Vorschaubilds, kombinierte Suche/Filter, Bearbeiten, CSRF-Schutz, vollständiges Löschen und eine echte HTTP-Byte-Range-Antwort (`206 Partial Content`).
+Automatisiert geprüft werden Anmeldung, Registrierung und die Rechte der drei Rollen (inklusive geschützter Mediendateien und X-Accel-Redirect), der dokumentbasierte JSON-Speicher, sichere Dateinamen, automatische Übernahme von Dauer und Erscheinungsjahr, Erzeugung des Vorschaubilds, kombinierte Suche/Filter, Bearbeiten, CSRF-Schutz, vollständiges Löschen und eine echte HTTP-Byte-Range-Antwort (`206 Partial Content`).
 
 Noch auf echten Endgeräten zu prüfen sind Bild und Ton eines realen H.264/AAC-Videos, Springen und Vollbild auf den verwendeten Notebook-/Tablet-/Smartphone-Browsern, gleichzeitige Wiedergaben sowie Leistung und Nginx-Betrieb auf dem Raspberry Pi 3.

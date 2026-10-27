@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Benutzer verwalten · Medienserver{% endblock %}
+{% block section %}Administration{% endblock %}
+{% block content %}
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">Administration</p>
+      <h1>Benutzer</h1>
+    </div>
+    <p class="page-meta"><span class="big-count">{{ '%02d'|format(users|length) }}</span> Konten</p>
+  </section>
+
+  {% if requests %}
+    <section class="section-block request-block">
+      <h2 class="section-title">Offene Trainer-Anfragen <span class="nav-count">{{ requests|length }}</span></h2>
+      <ul class="user-list">
+        {% for user in requests %}
+          <li class="user-row">
+            <div class="user-main">
+              <span class="user-name">{{ user.username }}</span>
+              <span class="user-date">registriert {{ user.created_at[:10] }} · derzeit Teilnehmer</span>
+            </div>
+            <div class="row-actions">
+              <form method="post" action="{{ url_for('decide_trainer_request', username=user.username) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="decision" value="approve">
+                <button class="button primary" type="submit">Freischalten</button>
+              </form>
+              <form method="post" action="{{ url_for('decide_trainer_request', username=user.username) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="decision" value="reject">
+                <button class="button secondary" type="submit">Ablehnen</button>
+              </form>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  <section class="section-block">
+    <h2 class="section-title">Alle Konten</h2>
+    <ul class="user-list">
+      {% for user in users %}
+        <li class="user-row">
+          <div class="user-main">
+            <span class="user-name">{{ user.username }}{% if user.username == current_user.username %} <small>(du)</small>{% endif %}</span>
+            <span class="role-badge role-{{ user.role }}">{{ role_names[user.role] }}</span>
+            {% if not user.active %}<span class="role-badge role-gesperrt">Gesperrt</span>{% endif %}
+            {% if user.trainer_requested and user.role == 'teilnehmer' %}<span class="role-badge role-gesperrt">Trainer angefragt</span>{% endif %}
+            <span class="user-date">seit {{ user.created_at[:10] }}</span>
+          </div>
+          <div class="row-actions">
+            <a class="button secondary" href="{{ url_for('edit_user', username=user.username) }}">Bearbeiten</a>
+            {% if user.username != current_user.username %}
+              <form method="post" action="{{ url_for('delete_user', username=user.username) }}" onsubmit="return confirm('Benutzer {{ user.username }} wirklich löschen? Seine Videos bleiben erhalten.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="button danger" type="submit">Löschen</button>
+              </form>
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="section-block">
+    <h2 class="section-title">Neuen Benutzer anlegen</h2>
+    <form method="post" class="form-panel form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label><span>Benutzername *</span><input name="username" required minlength="3" maxlength="32" autocapitalize="none" autocomplete="off" value="{{ request.form.get('username', '') }}"></label>
+      <label><span>Rolle *</span>
+        {% set selected_role = request.form.get('role', 'teilnehmer') %}
+        <select name="role" required>
+          {% for key, name in role_names.items() %}
+            <option value="{{ key }}" {% if selected_role == key %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="full"><span>Startpasswort *</span><input type="password" name="password" required minlength="8" autocomplete="new-password"><small>Mindestens 8 Zeichen. Der Benutzer kann es unter „Mein Konto“ ändern.</small></label>
+      <div class="form-actions full"><button class="button primary" type="submit">Benutzer anlegen</button></div>
+    </form>
+  </section>
+{% endblock %}

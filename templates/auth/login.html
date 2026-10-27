@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Anmelden · Medienserver{% endblock %}
+{% block section %}Anmelden{% endblock %}
+{% block content %}
+  <div class="split">
+    <section class="split-intro">
+      <p class="eyebrow">Schulungsplattform</p>
+      <h1>Anmelden</h1>
+      <p>Melde dich an, um die Schulungsvideos anzusehen.</p>
+    </section>
+    <section class="form-panel">
+      {% if no_users %}
+        <div class="flash flash-warning">
+          Es gibt noch keinen Benutzer. Lege zuerst einen Administrator an:
+          <code>flask --app app create-user admin</code>
+        </div>
+      {% endif %}
+      <form method="post" class="form-stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label><span>Benutzername</span><input name="username" required autocomplete="username" autocapitalize="none" value="{{ request.form.get('username', '') }}" autofocus></label>
+        <label><span>Passwort</span><input type="password" name="password" required autocomplete="current-password"></label>
+        <button class="button primary wide" type="submit">Anmelden</button>
+      </form>
+      {% if config.ALLOW_REGISTRATION %}
+        <p class="auth-switch">Noch kein Konto? <a href="{{ url_for('register') }}">Jetzt registrieren</a></p>
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}

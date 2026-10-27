@@ -1,29 +1,48 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Video hochladen' if mode == 'new' else 'Video bearbeiten' }} · Medienserver{% endblock %}
+{% block section %}Verwaltung{% endblock %}
 {% block content %}
   <a class="back-link" href="{{ url_for('manage_videos') }}">← Zur Verwaltung</a>
-  <section class="form-card">
-    <p class="eyebrow">Medienbestand</p>
-    <h1>{{ 'Video hochladen' if mode == 'new' else 'Video bearbeiten' }}</h1>
-    <form method="post" enctype="multipart/form-data" class="video-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label class="full"><span>Titel *</span><input name="title" required maxlength="200" value="{{ request.form.get('title', video.title if video else '') }}"></label>
-      <label class="full"><span>Beschreibung</span><textarea name="description" rows="5">{{ request.form.get('description', video.description if video else '') }}</textarea></label>
-      <label><span>Thema *</span><input name="topic" required maxlength="100" placeholder="z. B. Excel" value="{{ request.form.get('topic', video.topic if video else '') }}"></label>
-      <label><span>Sprache *</span>
-        {% set selected_language = request.form.get('language', video.language if video else 'DE') %}
-        <select name="language" required><option value="DE" {% if selected_language == 'DE' %}selected{% endif %}>Deutsch</option><option value="EN" {% if selected_language == 'EN' %}selected{% endif %}>Englisch</option></select>
-      </label>
-      {% if video %}
-        <div class="automatic-data full">
-          <strong>Automatisch erkannt</strong>
-          <span>Dauer: {{ video.duration_seconds|duration }}</span>
-          <span>Erscheinungsjahr: {{ video.year }}</span>
-          <span>Vorschaubild: erster Videoframe</span>
-        </div>
-      {% endif %}
-      <label class="upload-field full"><span>MP4-Video {% if mode == 'new' %}*{% endif %}</span><input type="file" name="video_file" accept="video/mp4" {% if mode == 'new' %}required{% endif %}><small>Beim Upload ermittelt ffprobe Dauer und Erscheinungsjahr; ffmpeg erstellt das Vorschaubild aus dem ersten Frame.{% if video %} Leer lassen, um Video und automatisch erzeugte Werte zu behalten.{% endif %}</small></label>
-      <div class="form-actions full"><button class="button primary" type="submit">{{ 'Hochladen' if mode == 'new' else 'Änderungen speichern' }}</button><a class="button ghost" href="{{ url_for('manage_videos') }}">Abbrechen</a></div>
-    </form>
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">Medienbestand</p>
+      <h1>{{ 'Video hochladen' if mode == 'new' else 'Video bearbeiten' }}</h1>
+    </div>
+    {% if video %}<p class="page-meta">{{ video.title }}</p>{% endif %}
   </section>
+  <form method="post" enctype="multipart/form-data" class="form-panel form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="full"><span>Titel *</span><input name="title" required maxlength="200" value="{{ request.form.get('title', video.title if video else '') }}"></label>
+    <label class="full"><span>Beschreibung</span><textarea name="description" rows="5">{{ request.form.get('description', video.description if video else '') }}</textarea></label>
+    <label><span>Thema *</span><input name="topic" required maxlength="100" placeholder="z. B. Excel" value="{{ request.form.get('topic', video.topic if video else '') }}"></label>
+    <label><span>Sprache *</span>
+      {% set selected_language = request.form.get('language', video.language if video else 'DE') %}
+      <select name="language" required><option value="DE" {% if selected_language == 'DE' %}selected{% endif %}>Deutsch</option><option value="EN" {% if selected_language == 'EN' %}selected{% endif %}>Englisch</option></select>
+    </label>
+    {% if video and is_admin %}
+      <label class="full"><span>Besitzer</span>
+        {% set selected_owner = request.form.get('owner', video.owner or '') %}
+        <select name="owner">
+          <option value="">– ohne Besitzer (nur Administratoren) –</option>
+          {% for name in owners %}
+            <option value="{{ name }}" {% if selected_owner == name %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+          {% if video.owner and video.owner not in owners %}
+            <option value="{{ video.owner }}" {% if selected_owner == video.owner %}selected{% endif %}>{{ video.owner }} (derzeit ohne Trainer-Rolle)</option>
+          {% endif %}
+        </select>
+        <small>Der Besitzer darf das Video als Trainer bearbeiten und löschen.</small>
+      </label>
+    {% endif %}
+    {% if video %}
+      <div class="automatic-data full">
+        <strong>Automatisch erkannt</strong>
+        <span>Dauer {{ video.duration_seconds|duration }}</span>
+        <span>Jahr {{ video.year }}</span>
+        <span>Vorschaubild: erster Frame</span>
+      </div>
+    {% endif %}
+    <label class="upload-field full"><span>MP4-Video {% if mode == 'new' %}*{% endif %}</span><input type="file" name="video_file" accept="video/mp4" {% if mode == 'new' %}required{% endif %}><small>Beim Upload ermittelt ffprobe Dauer und Erscheinungsjahr; ffmpeg erstellt das Vorschaubild aus dem ersten Frame.{% if video %} Leer lassen, um Video und automatisch erzeugte Werte zu behalten.{% endif %}</small></label>
+    <div class="form-actions full"><button class="button primary" type="submit">{{ 'Hochladen' if mode == 'new' else 'Änderungen speichern' }}</button><a class="button ghost" href="{{ url_for('manage_videos') }}">Abbrechen</a></div>
+  </form>
 {% endblock %}

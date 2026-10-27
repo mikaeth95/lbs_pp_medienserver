@@ -5,13 +5,17 @@ services:
     environment:
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env before starting Compose}"
       METADATA_DIR: /srv/medienserver-data/metadata
+      USER_DIR: /srv/medienserver-data/users
       VIDEO_DIR: /srv/medienserver-data/videos
       THUMBNAIL_DIR: /srv/medienserver-data/thumbnails
       MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-2048}"
+      ALLOW_REGISTRATION: "${ALLOW_REGISTRATION:-1}"
+      MEDIA_X_ACCEL: "1"
       FFPROBE_PATH: /usr/bin/ffprobe
       FFMPEG_PATH: /usr/bin/ffmpeg
     volumes:
       - ./data/videos:/srv/medienserver-data/metadata
+      - ./data/users:/srv/medienserver-data/users
       - ./uploads/videos:/srv/medienserver-data/videos
       - ./uploads/thumbnails:/srv/medienserver-data/thumbnails
     expose:

@@ -1,78 +1,103 @@
 {% extends "base.html" %}
 {% block title %}Videothek · Medienserver{% endblock %}
 {% block content %}
-  <section class="hero">
+  {% set q = filters.q or None %}
+  {% set lang = filters.language or None %}
+  {% set sort = filters.sort if filters.sort != 'newest' else None %}
+  <section class="page-head">
     <div>
-      <p class="eyebrow">Wissen auf Abruf</p>
-      <h1>Videothek</h1>
-      <p class="lead">Schulungsvideos nach Thema und Sprache finden.</p>
+      <p class="eyebrow">{% if filters.q %}Suche: „{{ filters.q }}“{% else %}Wissen auf Abruf{% endif %}</p>
+      <h1>{{ filters.topic or 'Videothek' }}</h1>
     </div>
-    <div class="hero-actions">
-      <span class="count-badge">{{ videos|length }} Video{% if videos|length != 1 %}s{% endif %}</span>
-      <a class="button primary" href="{{ url_for('upload_video') }}">+ Video hochladen</a>
+    <div class="catalog-search">
+      <form class="search-field" method="get" action="{{ url_for('catalog') }}" role="search">
+        <label class="sr-only" for="catalog-q">Suche</label>
+        <input id="catalog-q" type="search" name="q" value="{{ filters.q }}" placeholder="Was willst du lernen?">
+        {% if filters.topic %}<input type="hidden" name="topic" value="{{ filters.topic }}">{% endif %}
+        {% if filters.language %}<input type="hidden" name="language" value="{{ filters.language }}">{% endif %}
+        {% if sort %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
+        <button type="submit" aria-label="Suchen">
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+        </button>
+      </form>
     </div>
   </section>
 
-  <form class="filter-panel" method="get" action="{{ url_for('catalog') }}">
-    <label class="search-field">
-      <span>Suche</span>
-      <input type="search" name="q" value="{{ filters.q }}" placeholder="Titel, Beschreibung oder Thema">
-    </label>
-    <label>
-      <span>Thema</span>
-      <select name="topic">
-        <option value="">Alle Themen</option>
-        {% for item in topics %}
-          <option value="{{ item }}" {% if filters.topic == item %}selected{% endif %}>{{ item }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      <span>Sprache</span>
-      <select name="language">
-        <option value="">Alle Sprachen</option>
-        <option value="DE" {% if filters.language == 'DE' %}selected{% endif %}>Deutsch</option>
-        <option value="EN" {% if filters.language == 'EN' %}selected{% endif %}>Englisch</option>
-      </select>
-    </label>
-    <div class="filter-actions">
-      <button class="button primary" type="submit">Filtern</button>
-      {% if filters.q or filters.topic or filters.language %}
-        <a class="button ghost" href="{{ url_for('catalog') }}">Zurücksetzen</a>
-      {% endif %}
-    </div>
-  </form>
+  <div class="with-sidebar">
+    <aside class="filters" aria-label="Filter">
+      <nav class="filter-group" aria-labelledby="filter-topics">
+        <h2 id="filter-topics">Themen</h2>
+        <ul>
+          <li><a class="filter-link" href="{{ url_for('catalog', q=q, language=lang, sort=sort) }}" {% if not filters.topic %}aria-current="true"{% endif %}><span>Alle</span><span class="count">{{ '%02d'|format(total) }}</span></a></li>
+          {% for item in topics %}
+            <li><a class="filter-link" href="{{ url_for('catalog', q=q, topic=item, language=lang, sort=sort) }}" {% if filters.topic == item %}aria-current="true"{% endif %}><span>{{ item }}</span><span class="count">{{ '%02d'|format(topic_counts[item]) }}</span></a></li>
+          {% endfor %}
+        </ul>
+      </nav>
+      <nav class="filter-group" aria-labelledby="filter-language">
+        <h2 id="filter-language">Sprache</h2>
+        <ul>
+          <li><a class="filter-link" href="{{ url_for('catalog', q=q, topic=filters.topic or None, sort=sort) }}" {% if not filters.language %}aria-current="true"{% endif %}><span>Alle</span></a></li>
+          {% for code, name in language_names.items() %}
+            <li><a class="filter-link" href="{{ url_for('catalog', q=q, topic=filters.topic or None, language=code, sort=sort) }}" {% if filters.language == code %}aria-current="true"{% endif %}><span>{{ name }}</span><span class="count">{{ code }}</span></a></li>
+          {% endfor %}
+        </ul>
+      </nav>
+    </aside>
 
-  {% if videos %}
-    <div class="video-grid">
-      {% for video in videos %}
-        <article class="video-card">
-          <a class="card-image" href="{{ url_for('video_detail', video_id=video.id) }}">
-            {% if video.thumbnail_path %}
-              <img src="{{ url_for('serve_thumbnail', filename=video.thumbnail_path) }}" alt="Vorschaubild zu {{ video.title }}" loading="lazy">
-            {% else %}
-              <span class="placeholder-icon" aria-hidden="true">▶</span>
-              <span class="sr-only">Kein Vorschaubild vorhanden</span>
-            {% endif %}
-            <span class="duration-badge">{{ video.duration_seconds|duration }}</span>
-          </a>
-          <div class="card-body">
-            <div class="tag-row">
-              <span class="tag">{{ video.topic }}</span>
-              <span class="language-tag" lang="{{ video.language|lower }}">{{ video.language }}</span>
-            </div>
-            <h2><a href="{{ url_for('video_detail', video_id=video.id) }}">{{ video.title }}</a></h2>
-            <p>{{ video.description|truncate(110) if video.description else 'Keine Beschreibung vorhanden.' }}</p>
-          </div>
-        </article>
-      {% endfor %}
-    </div>
-  {% else %}
-    <section class="empty-state">
-      <span aria-hidden="true">⌕</span>
-      <h2>Keine Videos gefunden</h2>
-      <p>Passe Suche oder Filter an oder lade ein neues Video hoch.</p>
-      <a class="button primary empty-action" href="{{ url_for('upload_video') }}">Video hochladen</a>
+    <section class="content" aria-label="Videos">
+      <form class="list-toolbar" method="get" action="{{ url_for('catalog') }}">
+        {% if filters.q %}<input type="hidden" name="q" value="{{ filters.q }}">{% endif %}
+        {% if filters.topic %}<input type="hidden" name="topic" value="{{ filters.topic }}">{% endif %}
+        {% if filters.language %}<input type="hidden" name="language" value="{{ filters.language }}">{% endif %}
+        <p class="page-meta"><span class="big-count">{{ '%02d'|format(videos|length) }}</span> Video{% if videos|length != 1 %}s{% endif %}</p>
+        <label class="sort-field">
+          <span>Sortierung</span>
+          <select name="sort" onchange="this.form.submit()">
+            {% for key, name in sort_options.items() %}
+              <option value="{{ key }}" {% if filters.sort == key %}selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+          </select>
+          <noscript><button class="button secondary" type="submit">Sortieren</button></noscript>
+        </label>
+      </form>
+      {% if videos %}
+        <ol class="video-list">
+          {% for video in videos %}
+            <li class="video-row">
+              <a href="{{ url_for('video_detail', video_id=video.id) }}">
+                <span class="row-index">{{ '%02d'|format(loop.index) }}</span>
+                <span class="row-thumb">
+                  {% if video.thumbnail_path %}
+                    <img src="{{ url_for('serve_thumbnail', filename=video.thumbnail_path) }}" alt="" loading="lazy">
+                  {% else %}
+                    <span class="placeholder" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 12 12"><path d="M3 1.5v9l7.5-4.5z" fill="currentColor"/></svg></span>
+                  {% endif %}
+                </span>
+                <span class="row-body">
+                  <span class="row-topic">{{ video.topic }}</span>
+                  <span class="row-title">{{ video.title }}</span>
+                  {% if video.description %}<span class="row-desc">{{ video.description }}</span>{% endif %}
+                </span>
+                <span class="row-meta">
+                  <strong>{{ video.duration_seconds|duration }}</strong>
+                  <span lang="{{ video.language|lower }}">{{ video.language }} · {{ video.year }}</span>
+                </span>
+              </a>
+            </li>
+          {% endfor %}
+        </ol>
+      {% else %}
+        <section class="empty-state">
+          <h2>Keine Videos gefunden</h2>
+          {% if can_upload %}
+            <p>Passe Suche oder Filter an oder lade ein neues Video hoch.</p>
+            <a class="button primary" href="{{ url_for('upload_video') }}">+ Video hochladen</a>
+          {% else %}
+            <p>Passe Suche oder Filter an.</p>
+          {% endif %}
+        </section>
+      {% endif %}
     </section>
-  {% endif %}
+  </div>
 {% endblock %}

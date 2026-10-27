@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Mein Konto · Medienserver{% endblock %}
+{% block section %}Mein Konto{% endblock %}
+{% block content %}
+  <div class="split">
+    <section class="split-intro">
+      <p class="eyebrow">Mein Konto</p>
+      <h1>{{ current_user.username }}</h1>
+      <p><span class="role-badge role-{{ current_user.role }}">{{ role_names[current_user.role] }}</span></p>
+      {% if current_user.trainer_requested and current_user.role == 'teilnehmer' %}
+        <div class="flash flash-warning">Deine Trainer-Freischaltung ist beantragt und wartet auf einen Administrator.</div>
+      {% endif %}
+    </section>
+    <section class="form-panel">
+      <form method="post" class="form-stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label><span>Aktuelles Passwort</span><input type="password" name="current_password" required autocomplete="current-password"></label>
+        <label><span>Neues Passwort</span><input type="password" name="password" required minlength="8" autocomplete="new-password"><small>Mindestens 8 Zeichen</small></label>
+        <label><span>Neues Passwort wiederholen</span><input type="password" name="password_confirm" required minlength="8" autocomplete="new-password"></label>
+        <button class="button primary wide" type="submit">Passwort ändern</button>
+      </form>
+    </section>
+  </div>
+{% endblock %}

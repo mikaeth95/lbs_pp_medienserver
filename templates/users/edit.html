@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Benutzer bearbeiten · Medienserver{% endblock %}
+{% block section %}Administration{% endblock %}
+{% block content %}
+  <a class="back-link" href="{{ url_for('manage_users') }}">← Zur Benutzerverwaltung</a>
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">Benutzer bearbeiten</p>
+      <h1>{{ user.username }}</h1>
+    </div>
+    <p class="page-meta">seit {{ user.created_at[:10] }}</p>
+  </section>
+  <form method="post" class="form-panel form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if is_self %}
+      <input type="hidden" name="role" value="admin">
+      <input type="hidden" name="active" value="1">
+      <div class="automatic-data full">
+        <strong>Eigenes Konto</strong>
+        <span>Rolle und Sperre des eigenen Kontos können nicht geändert werden, damit immer ein Administrator bleibt.</span>
+      </div>
+    {% else %}
+      {% if user.trainer_requested and user.role == 'teilnehmer' %}
+        <div class="flash flash-warning full">Hat bei der Registrierung Trainer-Rechte beantragt. Rolle „Trainer“ wählen, um freizuschalten.</div>
+      {% endif %}
+      {% set selected_role = request.form.get('role', user.role) %}
+      <label><span>Rolle</span>
+        <select name="role" required>
+          {% for key, name in role_names.items() %}
+            <option value="{{ key }}" {% if selected_role == key %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% set is_active = request.form.get('active') == '1' if request.method == 'POST' else user.active %}
+      <label class="checkbox-field"><input type="checkbox" name="active" value="1" {% if is_active %}checked{% endif %}><span>Konto aktiv (nicht gesperrt)</span></label>
+    {% endif %}
+    <label class="full"><span>Neues Passwort</span><input type="password" name="password" minlength="8" autocomplete="new-password"><small>Leer lassen, um das Passwort zu behalten. Ein neues Passwort meldet den Benutzer überall ab.</small></label>
+    <div class="form-actions full"><button class="button primary" type="submit">Speichern</button><a class="button ghost" href="{{ url_for('manage_users') }}">Abbrechen</a></div>
+  </form>
+{% endblock %}

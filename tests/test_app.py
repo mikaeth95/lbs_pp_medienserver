@@ -24,7 +24,7 @@ def load_only_video(app):
     return json.loads(documents[0].read_text(encoding="utf-8"))
 
 
-def test_catalog_upload_and_management_are_public(client):
+def test_trainer_reaches_catalog_upload_and_management(client):
     assert client.get("/").status_code == 200
     upload_page = client.get("/upload")
     assert upload_page.status_code == 200
@@ -95,23 +95,23 @@ def test_invalid_video_removes_failed_upload(app, client, monkeypatch):
     assert not list(Path(app.config["VIDEO_DIR"]).iterdir())
 
 
-def test_combined_search_topic_and_language_filters(app, upload_video):
+def test_combined_search_topic_and_language_filters(app, client, upload_video):
     upload_video(title="Excel Deutsch", topic="Office", language="DE")
     upload_video(title="Excel English", topic="Office", language="EN")
     upload_video(title="Python Deutsch", topic="Programmierung", language="DE")
     assert len(json_documents(app)) == 3
 
-    response = app.test_client().get("/?q=Excel&topic=Office&language=DE")
+    response = client.get("/?q=Excel&topic=Office&language=DE")
     assert response.status_code == 200
     assert "Excel Deutsch" in response.text
     assert "Excel English" not in response.text
     assert "Python Deutsch" not in response.text
 
 
-def test_range_request_returns_partial_video(app, upload_video):
+def test_range_request_returns_partial_video(app, client, upload_video):
     upload_video()
     video = load_only_video(app)
-    response = app.test_client().get(
+    response = client.get(
         f"/media/videos/{video['video_path']}", headers={"Range": "bytes=5-12"}
     )
     assert response.status_code == 206
@@ -225,3 +225,32 @@ def test_real_upload_extracts_duration_year_and_first_frame(app, client, tmp_pat
         "video",
     }
     assert Path(app.config["THUMBNAIL_DIR"], video["thumbnail_path"]).stat().st_size > 0
+
+
+def test_catalog_sort_options(app, client, upload_video):
+    # Uploads landen in derselben Sekunde; eindeutige Zeitstempel setzen.
+    for index, title in enumerate(["Beta", "Alpha", "Gamma"]):
+        upload_video(title=title, topic="Office")
+        with app.app_context():
+            video = next(v for v in app_module.list_videos() if v["title"] == title)
+            video["created_at"] = f"2026-10-0{index + 1}T10:00:00+02:00"
+            video["duration_seconds"] = 300 - index * 100
+            app_module.write_video(video)
+
+    def order(params):
+        text = client.get("/" + params).text
+        return sorted(["Alpha", "Beta", "Gamma"], key=text.index)
+
+    assert order("") == ["Gamma", "Alpha", "Beta"]
+    assert order("?sort=oldest") == ["Beta", "Alpha", "Gamma"]
+    assert order("?sort=title") == ["Alpha", "Beta", "Gamma"]
+    assert order("?sort=duration") == ["Gamma", "Alpha", "Beta"]
+    assert order("?sort=unbekannt") == ["Gamma", "Alpha", "Beta"]
+    assert 'value="title" selected' in client.get("/?sort=title").text
+
+
+def test_catalog_has_no_reset_link_and_keeps_sort_in_filters(client, upload_video):
+    upload_video()
+    text = client.get("/?topic=Office&sort=title").text
+    assert "zurücksetzen" not in text
+    assert 'href="/?sort=title"' in text
