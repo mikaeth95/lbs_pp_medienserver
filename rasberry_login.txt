@@ -1,1 +1,71 @@
-pi
+RASPBERRY PI - SSH-VERBINDUNG
+=============================
+
+Benutzer:  pi
+Adresse:   10.0.13.3   (kann sich aendern, siehe unten "IP herausfinden")
+Ordner:    /home/pi/medienserver
+
+Passwort hier NICHT eintragen (die Datei kann mit auf GitHub landen).
+
+
+1. Verbinden (Windows PowerShell oder Terminal)
+-----------------------------------------------
+   ssh pi@10.0.13.3
+
+   - Beim allerersten Mal kommt die Frage
+       "Are you sure you want to continue connecting (yes/no)?"
+     -> yes eintippen und Enter.
+   - Dann das Passwort eingeben. Beim Tippen erscheint nichts
+     (keine Sternchen), das ist normal. Danach Enter.
+   - Erfolgreich verbunden, wenn die Eingabezeile so aussieht:
+       pi@raspberrypi:~ $
+
+   PC/Laptop und Pi muessen im selben Netzwerk (WLAN/LAN) sein.
+
+
+2. Verbindung beenden
+---------------------
+   exit
+
+
+3. IP herausfinden (falls 10.0.13.3 nicht geht)
+-----------------------------------------------
+   Direkt am Pi (Bildschirm + Tastatur):
+       hostname -I
+   -> die erste Adresse nehmen (nicht 172.17.x.x / 172.18.x.x, das ist Docker).
+
+   Alternativ vom PC aus versuchen:
+       ssh pi@raspberrypi.local
+
+
+4. Nach dem Login: Medienserver
+-------------------------------
+   cd /home/pi/medienserver
+   git pull                              # neuesten Stand von GitHub holen
+   sudo docker compose up --build -d     # bauen und starten
+   sudo docker compose ps                # laeuft alles?
+   sudo docker compose logs --tail=100 app nginx   # Fehler ansehen
+
+   Im Browser: http://10.0.13.3/
+
+
+5. Dateien vom PC auf den Pi kopieren (ohne Git)
+------------------------------------------------
+   In PowerShell im Projektordner auf dem PC (nicht im Pi!):
+       scp .\app.py pi@10.0.13.3:/home/pi/medienserver/
+       scp -r .\templates pi@10.0.13.3:/home/pi/medienserver/
+
+
+6. Haeufige Fehler
+------------------
+   "Connection timed out"
+       -> falsche IP, Pi aus, oder nicht im selben Netzwerk.
+   "Connection refused"
+       -> SSH am Pi nicht aktiv. Am Pi einmalig:
+          sudo systemctl enable --now ssh
+   "Permission denied"
+       -> falsches Passwort oder falscher Benutzername.
+   "REMOTE HOST IDENTIFICATION HAS CHANGED"
+       -> Pi wurde neu aufgesetzt. Am PC alten Eintrag loeschen:
+          ssh-keygen -R 10.0.13.3
+          danach neu verbinden.

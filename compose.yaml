@@ -41,3 +41,15 @@ services:
       - ./uploads/videos:/srv/medienserver-data/videos:ro
       - ./uploads/thumbnails:/srv/medienserver-data/thumbnails:ro
     restart: unless-stopped
+
+  # Optional: macht den Medienserver ueber eine oeffentliche https-Adresse
+  # (*.trycloudflare.com) erreichbar. Startet nur, wenn in .env
+  # COMPOSE_PROFILES=tunnel steht. Adresse anzeigen:
+  #   sudo docker compose logs tunnel | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate --url http://nginx:80
+    depends_on:
+      - nginx
+    restart: unless-stopped
