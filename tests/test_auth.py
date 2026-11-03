@@ -285,6 +285,19 @@ def test_x_accel_redirect_hands_media_to_nginx(app, client, upload_video):
     assert client.get("/media/videos/../users/admin.json").status_code == 404
 
 
+def test_session_cookie_secure_follows_environment(monkeypatch, tmp_path):
+    directories = {
+        key: tmp_path / key for key in ("METADATA_DIR", "USER_DIR", "VIDEO_DIR", "THUMBNAIL_DIR")
+    }
+    monkeypatch.delenv("SESSION_COOKIE_SECURE", raising=False)
+    assert app_module.create_app(directories).config["SESSION_COOKIE_SECURE"] is False
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    application = app_module.create_app(directories)
+    assert application.config["SESSION_COOKIE_SECURE"] is True
+    response = application.test_client().get("/login")
+    assert "Secure" in response.headers["Set-Cookie"]
+
+
 def test_cli_creates_user_and_resets_password(app):
     runner = app.test_cli_runner()
     result = runner.invoke(args=["create-user", "chef", "--password", "chef-pass-1"])

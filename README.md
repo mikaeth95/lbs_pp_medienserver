@@ -1,6 +1,6 @@
 # Medienserver für Schulungsvideos
 
-Eine kleine deutschsprachige Videothek auf Basis von Flask und JSON-Dokumenten. Sie läuft lokal unter Windows und mit Docker Compose hinter Nginx und Gunicorn auf einem Raspberry Pi. Videos werden nicht während der Wiedergabe umgewandelt. Erwartet werden vorbereitete MP4-Dateien mit H.264-Video und AAC-Audio.
+Eine kleine deutschsprachige Videothek auf Basis von Flask und JSON-Dokumenten. Sie läuft lokal unter Windows, mit Docker Compose hinter Nginx und Gunicorn auf einem Raspberry Pi und vorübergehend mit HTTPS hinter Caddy auf einem Ubuntu-Heimserver. Videos werden nicht während der Wiedergabe umgewandelt. Erwartet werden vorbereitete MP4-Dateien mit H.264-Video und AAC-Audio.
 
 ## Funktionen
 
@@ -115,7 +115,8 @@ Die Datei `.env.example` dokumentiert alle Einstellungen:
 | `THUMBNAIL_DIR` | `uploads/thumbnails` | Ordner für Bilder |
 | `MAX_UPLOAD_MB` | `2048` | maximales Volumen einer Upload-Anfrage |
 | `ALLOW_REGISTRATION` | `1` | `1` erlaubt Selbstregistrierung als Teilnehmer, `0` schaltet sie ab |
-| `MEDIA_X_ACCEL` | `0` | `1` nur hinter Nginx mit `deployment/`-Konfiguration: Flask prüft die Anmeldung, Nginx liefert die Datei |
+| `MEDIA_X_ACCEL` | `0` | `1` nur hinter Nginx oder Caddy mit `deployment/`-Konfiguration: Flask prüft die Anmeldung, der Webserver liefert die Datei |
+| `SESSION_COOKIE_SECURE` | `0` | `1` nur bei HTTPS (Heimserver): Login-Cookie wird nie unverschlüsselt gesendet |
 | `FFPROBE_PATH` | `ffprobe` | Programm/Pfad für die Dauerermittlung |
 | `FFMPEG_PATH` | `ffmpeg` | Programm/Pfad für ein Vorschaubild aus dem ersten Frame |
 | `FLASK_HOST` | `127.0.0.1` | `0.0.0.0` erlaubt LAN-Zugriff |
@@ -132,6 +133,10 @@ pytest -q
 ```
 
 Die Tests verwenden temporäre JSON- und Mediendateien. Wenn die projektlokalen FFmpeg-Programme vorhanden sind, erzeugt ein Integrationstest zusätzlich eine echte H.264/AAC-Datei und prüft Dauer, Jahr und Vorschaubild.
+
+## Ubuntu-Heimserver mit HTTPS (vorübergehend)
+
+Für den Test über das Internet läuft der Medienserver auf dem Heimserver `server-home` (Ubuntu, `10.0.0.19`): Gunicorn nur auf `127.0.0.1:8000`, davor Caddy mit automatischem Let's-Encrypt-Zertifikat, DuckDNS für den festen Namen und systemd für den Autostart. Caddy liefert Videos per `X-Accel-Redirect` aus (`deployment/Caddyfile`), Flask prüft vorher die Anmeldung. Alle Schritte inklusive Firewall, Router, Backup, Update und Rückweg stehen in [ANLEITUNG_HEIMSERVER.md](ANLEITUNG_HEIMSERVER.md).
 
 ## Raspberry Pi mit Docker Compose (Produktion)
 

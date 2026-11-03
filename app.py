@@ -90,6 +90,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         ),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
+        # Nur hinter HTTPS (Caddy am Heimserver) einschalten, sonst klappt der Login über HTTP nicht.
+        SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "0") == "1",
     )
     if test_config:
         app.config.update(test_config)
