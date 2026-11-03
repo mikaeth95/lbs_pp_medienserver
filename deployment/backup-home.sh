@@ -6,7 +6,7 @@
 #   sudo bash /opt/medienserver/deployment/backup-home.sh restore ARCHIV  Archiv zurückspielen
 #
 # Gesichert werden data/ (Video-JSONs, Benutzer), uploads/ (Videos, Vorschaubilder),
-# caddy/ (Zertifikate), .env und /etc/medienserver/ddns.env.
+# caddy/ (Zertifikate), .env und /etc/ddclient.conf (Dynamic DNS).
 #
 # Konsistenz bei laufenden Uploads: Zuerst wird bei laufender App in einen Zwischenstand
 # kopiert (dauert). Dann wird die App kurz gestoppt – laufende Uploads dürfen noch fertig
@@ -20,7 +20,7 @@ PROJECT_DIR="${PROJECT_DIR:-/opt/medienserver}"
 BACKUP_DIR="${BACKUP_DIR:-/home/michael/medienserver-backups}"
 BACKUP_OWNER="${BACKUP_OWNER-michael}"    # darf die Archive per scp abholen; leer = nur root
 KEEP="${KEEP:-7}"                         # so viele Archive bleiben liegen (täglich = 7 Tage)
-DDNS_ENV_FILE="${DDNS_ENV_FILE:-/etc/medienserver/ddns.env}"
+DDCLIENT_CONF="${DDCLIENT_CONF:-/etc/ddclient.conf}"   # Dynamic DNS (Namecheap) am Host
 STAGING="$BACKUP_DIR/.staging"
 COMPOSE=(docker compose --project-directory "$PROJECT_DIR" -f "$PROJECT_DIR/compose.home.yaml")
 
@@ -70,9 +70,9 @@ sync_to_staging() {
             rsync -a --delete --numeric-ids "$PROJECT_DIR/$item" "$STAGING/project/"
         fi
     done
-    if [ -f "$DDNS_ENV_FILE" ]; then
+    if [ -f "$DDCLIENT_CONF" ]; then
         mkdir -p "$STAGING/etc"
-        rsync -a "$DDNS_ENV_FILE" "$STAGING/etc/ddns.env"
+        rsync -a "$DDCLIENT_CONF" "$STAGING/etc/ddclient.conf"
     fi
 }
 
@@ -121,7 +121,7 @@ backup() {
     stamp=$(date +%Y-%m-%d_%H-%M)
     target="$BACKUP_DIR/medienserver-home_$stamp.tar"
     members=(MANIFEST.txt project)
-    [ -f "$STAGING/etc/ddns.env" ] && members+=(etc)
+    [ -f "$STAGING/etc/ddclient.conf" ] && members+=(etc)
     tar --numeric-owner -cf "$target.tmp" -C "$STAGING" "${members[@]}"
     mv "$target.tmp" "$target"
     chmod 600 "$target"   # enthält SECRET_KEY und DNS-Zugangsdaten
@@ -207,10 +207,11 @@ restore() {
         fi
     done
     tar --numeric-owner -xpf "$archive" -C "$PROJECT_DIR" --strip-components=1 project
-    if tar -tf "$archive" etc/ddns.env >/dev/null 2>&1 && [ ! -e "$DDNS_ENV_FILE" ]; then
-        install -d -m 700 "$(dirname "$DDNS_ENV_FILE")"
-        tar -xOf "$archive" etc/ddns.env > "$DDNS_ENV_FILE"
-        chmod 600 "$DDNS_ENV_FILE"
+    # ddclient-Konfiguration nur auf einem neuen Server zurückschreiben, nie eine vorhandene ersetzen.
+    if tar -tf "$archive" etc/ddclient.conf >/dev/null 2>&1 && [ ! -e "$DDCLIENT_CONF" ]; then
+        install -m 600 /dev/null "$DDCLIENT_CONF"
+        tar -xOf "$archive" etc/ddclient.conf > "$DDCLIENT_CONF"
+        log "ddclient-Konfiguration nach $DDCLIENT_CONF zurückgeschrieben."
     fi
     resume_app
     log "Wiederhergestellt aus $archive."

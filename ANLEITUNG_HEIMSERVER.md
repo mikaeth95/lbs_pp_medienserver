@@ -6,17 +6,16 @@ Diese Anleitung stellt den bisherigen systemd-Dienst **schrittweise und ohne Dat
 Docker Compose um. Später geht der Server auf den Pi zurück (Teil 12).
 
 ```
-Mitschüler (Browser, https://medien.example.com)
+Mitschüler (Browser, https://medienserver.michael-gonaus.dev)
         │
-DNS (Namecheap oder anderer Anbieter)  →  aktuelle öffentliche A1-IPv4
-        │                                  (Container "ddns" meldet Änderungen)
+DNS bei Namecheap  →  aktuelle öffentliche A1-IPv4
+        │              (ddclient am Ubuntu-Host meldet Änderungen)
 A1 Hybrid Box: TCP 80 + 443  →  10.0.0.19
         │
 ┌─ Docker Compose (compose.home.yaml) ───────────────────────────────┐
 │  caddy  : HTTPS, Let's-Encrypt-Zertifikat, liefert Videos aus      │
 │     │      (einziger Container mit offenen Ports: 80, 443)         │
 │  app    : Flask + Gunicorn, nur im internen Docker-Netz, kein Internet│
-│  ddns   : meldet die öffentliche IPv4 an den DNS-Anbieter          │
 └────────────────────────────────────────────────────────────────────┘
         │  Bind Mounts
 /opt/medienserver/data/   (JSON je Video, JSON je Benutzer)
@@ -34,19 +33,18 @@ A1 Hybrid Box: TCP 80 + 443  →  10.0.0.19
   nicht einmal Internetzugang.
 - **Caddy liefert die Videos:** Flask prüft vorher die Anmeldung und antwortet mit
   `X-Accel-Redirect`; Caddy schickt dann die Datei inklusive Vorspulen (Range-Requests).
-- **Eigene Subdomain:** `medien.example.com` – die anderen Projekte auf der Domain
-  bleiben unberührt.
+- **Eigene Subdomain:** `medienserver.michael-gonaus.dev` – die anderen Projekte auf der Domain
+  bleiben unberührt. Dynamic DNS macht ddclient direkt am Host, Docker braucht dafür nichts.
 - **Pi unverändert:** Der Raspberry Pi nutzt weiter `compose.yaml` (Nginx, HTTP im Schul-LAN).
 
-Überall steht `medien.example.com` für eure Subdomain und `example.com` für eure
-Namecheap-Domain – beim Abtippen ersetzen. **Am PC** = PowerShell im Projektordner,
+**Am PC** = PowerShell im Projektordner,
 **Am Server** = SSH-Terminal auf `server-home` als `michael`.
 
 | Teil | Inhalt | Dienst danach |
 | --- | --- | --- |
 | 1 | Ausgangslage prüfen, Code holen, Sicherung | systemd |
 | 2 | Docker installieren | systemd |
-| 3 | DNS: Subdomain und Dynamic DNS | systemd |
+| 3 | DNS prüfen (ddclient) | systemd |
 | 4 | `.env` ergänzen, Konfiguration und Rechte prüfen | systemd |
 | 5 | App-Container parallel testen | systemd + Docker-App |
 | 6 | Router, Firewall, Caddy starten | systemd + Docker |
@@ -92,7 +90,7 @@ Erwartet:
 ```bash
 cd /opt/medienserver
 sudo -u medienserver git pull --ff-only
-ls compose.home.yaml deployment/Caddyfile deployment/backup-home.sh deployment/ddns-update.sh
+ls compose.home.yaml deployment/Caddyfile deployment/backup-home.sh
 ```
 
 Der laufende systemd-Dienst merkt davon nichts, er läuft mit dem alten Stand weiter.
@@ -142,80 +140,34 @@ Erwartet: `Hello from Docker!` und eine Compose-Version ab 2.24.
 
 ---
 
-## Teil 3: DNS – Subdomain und Dynamic DNS
+## Teil 3: DNS prüfen (ddclient)
 
-Auf der Domain laufen andere Projekte. Deshalb wird **nur ein neuer Eintrag** für die
-Subdomain `medien` angelegt. Bestehende Einträge werden nicht verändert.
-
-### Schritt 3.1 – Am Server: Wer betreibt die Nameserver wirklich?
-
-Die Domain kann bei Namecheap gekauft sein, die DNS-Einträge aber woanders liegen
-(z. B. Cloudflare oder ein Webhoster). Das entscheidet, wie Dynamic DNS funktioniert:
+Dynamic DNS ist am Ubuntu-Host bereits mit **ddclient** eingerichtet und hält
+`medienserver.michael-gonaus.dev` bei Namecheap auf der aktuellen A1-Adresse. Docker braucht dafür nichts,
+und an den anderen DNS-Einträgen der Domain ändert sich nichts. Nur prüfen:
 
 ```bash
 sudo apt install -y bind9-dnsutils
-dig +short NS example.com
-dig +short medien.example.com
-dig +short CAA example.com
+systemctl is-active ddclient
+curl -4 -s https://api.ipify.org; echo
+dig +short medienserver.michael-gonaus.dev A
+dig +short michael-gonaus.dev CAA
 ```
 
-| Ausgabe von `dig NS` | Anbieter | weiter mit |
-| --- | --- | --- |
-| `dns1.registrar-servers.com` / `dns2.…` (BasicDNS), `pdns1.…` (PremiumDNS), `freedns1.…` | Namecheap | 3.2 A |
-| `….ns.cloudflare.com` | Cloudflare | 3.2 B |
-| etwas anderes (z. B. `dns1.namecheaphosting.com`, Webhoster) | Fremdanbieter | 3.2 B |
+Erwartet:
 
-- `dig +short medien.example.com` sollte **leer** sein (Subdomain noch frei). Kommt eine Adresse,
-  wird `medien` schon verwendet oder es gibt einen Wildcard-Eintrag (`*`) – dann einen anderen
-  Namen wählen oder erst klären.
-- `dig CAA`: leer oder `letsencrypt.org` ist in Ordnung. Steht dort nur eine andere
-  Zertifizierungsstelle, kann Caddy kein Zertifikat bekommen – dann vorher melden.
+- `active`
+- zweimal **dieselbe** IPv4-Adresse (ipify und `dig`)
+- bei `CAA` keine Ausgabe oder ein Eintrag mit `letsencrypt.org`. Steht dort nur eine andere
+  Zertifizierungsstelle, bekommt Caddy kein Zertifikat – dann vorher melden.
 
-### Schritt 3.2 A – Namecheap betreibt die Nameserver
+> **Besonderheit `.dev`:** Alle Browser öffnen `.dev`-Adressen nur über HTTPS (HSTS-Preload).
+> Ohne gültiges Zertifikat ist die Seite also gar nicht erreichbar, auch nicht per `http://`.
+> Let's Encrypt prüft den Server trotzdem über Port 80 – deshalb werden in Teil 6 beide
+> Ports 80 und 443 weitergeleitet.
 
-1. Namecheap → **Domain List** → bei `example.com` **Manage** → Reiter **Advanced DNS**.
-2. Abschnitt **Dynamic DNS** → Schalter auf **ON**. Bestehende Einträge bleiben dabei
-   unverändert. Das angezeigte **Dynamic DNS Password** nicht abschreiben oder in den Chat
-   kopieren, es wird gleich direkt am Server eingetragen.
-3. **Host Records** → **Add New Record** → Typ **A + Dynamic DNS Record**,
-   Host `medien`, Value `127.0.0.1` (wird gleich automatisch ersetzt), TTL **Automatic** → ✓ speichern.
-   Keinen anderen Eintrag anfassen.
-
-Zugangsdaten am Server ablegen (außerhalb des Repos, nur root darf lesen):
-
-```bash
-sudo install -d -m 700 /etc/medienserver
-sudo install -m 600 /dev/null /etc/medienserver/ddns.env
-sudo nano /etc/medienserver/ddns.env
-```
-
-```
-DDNS_PROVIDER=namecheap
-DDNS_HOST=medien
-DDNS_DOMAIN=example.com
-DDNS_PASSWORD=hier-das-dynamic-dns-password-einfuegen
-```
-
-Speichern mit `Strg+O`, `Enter`, `Strg+X`.
-
-### Schritt 3.2 B – Nameserver liegen nicht bei Namecheap
-
-Dynamic DNS über die API von Cloudflare oder eines Webhosters würde einen Zugangsschlüssel
-für die **ganze** Domain auf den Heimserver legen. Sicherer und überall gleich:
-einmalig einen CNAME auf einen kostenlosen DuckDNS-Namen, den der Server aktualisiert.
-
-1. <https://www.duckdns.org> → mit GitHub/Google anmelden → Namen anlegen, z. B. `lbs-medienserver`.
-2. Beim DNS-Anbieter der Domain **einen neuen Eintrag** anlegen:
-   Typ `CNAME`, Name `medien`, Ziel `lbs-medienserver.duckdns.org`.
-   Bei Cloudflare: Proxy-Status **DNS only** (graue Wolke), sonst klappen Zertifikat und
-   große Uploads nicht.
-3. Zugangsdaten wie oben in `/etc/medienserver/ddns.env` ablegen, Inhalt:
-
-```
-DDNS_PROVIDER=duckdns
-DDNS_HOST=lbs-medienserver
-DDNS_PASSWORD=hier-den-duckdns-token-einfuegen
-```
+Die ddclient-Konfiguration `/etc/ddclient.conf` (enthält das Namecheap-Passwort) bleibt, wo sie
+ist, und wird vom Backup mitgesichert (Teil 10).
 
 ---
 
@@ -224,23 +176,23 @@ DDNS_PASSWORD=hier-den-duckdns-token-einfuegen
 ### Schritt 4.1 – Am Server: `.env` ergänzen
 
 Die vorhandene `.env` mit dem `SECRET_KEY` bleibt, es kommen nur Zeilen dazu
-(`medien.example.com` ersetzen; `122`/`33` aus Schritt 1.2):
+(`122`/`33` aus Schritt 1.2):
 
 ```bash
 cd /opt/medienserver
 sudo cp -p .env /home/michael/env-vor-docker.bak
-sudo tee -a .env >/dev/null <<'EOF'
+sudo grep -q '^COMPOSE_FILE=' .env || sudo tee -a .env >/dev/null <<'EOF'
 
 # Docker Compose am Heimserver
 COMPOSE_FILE=compose.home.yaml
-COMPOSE_PROFILES=ddns
 PUID=122
 PGID=33
-MEDIENSERVER_DOMAIN=medien.example.com
+MEDIENSERVER_DOMAIN=medienserver.michael-gonaus.dev
 EOF
 sudo grep -v '^SECRET_KEY=' .env
 ```
 
+Die Zeilen werden nur angehängt, wenn sie noch fehlen; vorhandene Einträge bleiben unverändert.
 Der letzte Befehl zeigt alles außer dem Geheimnis. `SESSION_COOKIE_SECURE=1`,
 `ALLOW_REGISTRATION=0` und `MEDIA_X_ACCEL=1` sind in `compose.home.yaml` fest eingestellt
 und lassen sich über `.env` nicht versehentlich abschalten.
@@ -256,7 +208,7 @@ sudo docker compose config --quiet && echo "Compose ok"
 sudo docker compose config --services
 ```
 
-Erwartet: `Compose ok` und `app`, `caddy`, `ddns`.
+Erwartet: `Compose ok` und `app`, `caddy`.
 
 > **Nicht** `docker compose config` ohne `--quiet` ausführen und die Ausgabe weitergeben:
 > sie enthält den `SECRET_KEY`.
@@ -344,23 +296,9 @@ sudo ufw status numbered
 > Zustand und gelten auch beim Rollback auf systemd. Der eigentliche Schutz ist, dass in
 > `compose.home.yaml` **nur Caddy** Ports veröffentlicht – niemals `ports:` bei `app` ergänzen.
 
-### Schritt 6.3 – Am Server: DynDNS starten und prüfen
+### Schritt 6.3 – Am Server: Caddy starten
 
-```bash
-cd /opt/medienserver
-sudo docker compose up -d ddns
-sleep 15
-sudo docker compose logs ddns
-curl -4 -s https://api.ipify.org; echo
-dig +short medien.example.com
-```
-
-Erwartet im Log: `DNS-Eintrag … zeigt jetzt auf 194.…`. Die Adresse von `ipify` und `dig`
-müssen gleich sein (bei CNAME zeigt `dig` zuerst den DuckDNS-Namen, dann die Adresse).
-Bis der neue Eintrag weltweit sichtbar ist, kann es ein paar Minuten dauern – erst weitermachen,
-wenn `dig` die richtige Adresse zeigt.
-
-### Schritt 6.4 – Am Server: Caddy starten
+Vorher noch einmal `dig +short medienserver.michael-gonaus.dev` – die Adresse muss stimmen (Teil 3).
 
 ```bash
 cd /opt/medienserver
@@ -370,7 +308,7 @@ sudo docker compose logs -f caddy
 ```
 
 Nach einigen Sekunden sollte `certificate obtained successfully` erscheinen. Mit `Strg+C` raus.
-`app`, `caddy` und `ddns` laufen, `app` und `caddy` sind **healthy**.
+`app` und `caddy` laufen und sind **healthy**.
 
 Kommt `timeout during connect` oder `connection refused`: Router-Regeln, `dig` und
 `sudo ss -lntp | grep -E ':(80|443)\b'` (muss `docker-proxy` zeigen) prüfen.
@@ -386,9 +324,9 @@ nach mehreren Fehlversuchen für eine Stunde.
 
 ```bash
 sudo ss -lntp | grep -E ':(80|443|8000)\b'
-curl -sI https://medien.example.com/login | head -1
-curl -sI http://medien.example.com/login | grep -i '^location'
-curl -sI https://medien.example.com/media/videos/test.mp4 | grep -i '^location'
+curl -sI https://medienserver.michael-gonaus.dev/login | head -1
+curl -sI http://medienserver.michael-gonaus.dev/login | grep -i '^location'
+curl -sI https://medienserver.michael-gonaus.dev/media/videos/test.mp4 | grep -i '^location'
 ```
 
 Erwartet:
@@ -403,7 +341,7 @@ das ist kein Fehler des Servers, dann am Handy prüfen.
 
 | Test | OK? |
 | --- | --- |
-| `https://medien.example.com` zeigt ein Schloss, keine Zertifikatswarnung | ☐ |
+| `https://medienserver.michael-gonaus.dev` zeigt ein Schloss, keine Zertifikatswarnung | ☐ |
 | Anmeldung mit vorhandenem Konto klappt, falsches Passwort wird abgelehnt | ☐ |
 | „Registrieren“ gibt es nicht (Konten legt der Admin an) | ☐ |
 | Ohne Anmeldung: nur Login-Seite, auch Video-Links leiten auf Login um | ☐ |
@@ -440,7 +378,7 @@ cd /opt/medienserver
 sudo docker compose ps
 ```
 
-Alle drei Container laufen wieder (`restart: unless-stopped`), die Seite ist erreichbar.
+Beide Container laufen wieder (`restart: unless-stopped`), die Seite ist erreichbar.
 
 ---
 
@@ -478,7 +416,7 @@ Nie `docker compose down -v` oder `rm -rf data uploads` verwenden.
 | Videos und Vorschaubilder | `uploads/` |
 | Konfiguration mit `SECRET_KEY` | `.env` |
 | Zertifikate und ACME-Konto von Caddy | `caddy/` |
-| DNS-Zugangsdaten | `/etc/medienserver/ddns.env` |
+| ddclient-Konfiguration (Namecheap Dynamic DNS) | `/etc/ddclient.conf` |
 
 Zusätzlich steht im Archiv eine `MANIFEST.txt` mit Git-Stand und Docker-Images. Der Code
 selbst ist auf GitHub, die Images lassen sich mit `docker compose build` jederzeit neu bauen –
@@ -547,7 +485,7 @@ cd /opt/medienserver && sudo docker compose ps
 Ablauf: Archiv prüfen → alle Container stoppen → bisherige `data/`, `uploads/`, `caddy/`, `.env`
 nach `/opt/medienserver/vor-restore-<Zeitpunkt>/` **verschieben** (nichts wird gelöscht) →
 Archiv auspacken (Besitzer und Rechte bleiben erhalten) → Container starten.
-`/etc/medienserver/ddns.env` wird nur zurückgeschrieben, wenn sie fehlt.
+`/etc/ddclient.conf` wird nur zurückgeschrieben, wenn sie fehlt – eine vorhandene bleibt unverändert.
 
 Erst wenn alles geprüft ist, darf der `vor-restore-…`-Ordner von Hand gelöscht werden.
 
@@ -558,7 +496,9 @@ etwa eine Minute; falls etwas nicht passt, liegt der alte Stand im `vor-restore-
 **Neuer Server (Festplatte kaputt):** Ubuntu + Docker installieren (Teil 2), Repo nach
 `/opt/medienserver` klonen, Benutzer `medienserver` anlegen
 (`sudo adduser --system --group --no-create-home --home /opt/medienserver medienserver`),
-dann `restore` mit dem Archiv vom PC und `sudo docker compose up -d --build`. Hat
+dann `restore` mit dem Archiv vom PC und `sudo docker compose up -d --build`.
+ddclient installieren (`sudo apt install ddclient`, Fragen des Assistenten überspringen) –
+`restore` hat `/etc/ddclient.conf` schon zurückgeschrieben; danach `sudo systemctl restart ddclient`. Hat
 `medienserver` dort eine andere UID, `PUID` in `.env` anpassen und
 `sudo chown -R medienserver:www-data data uploads` ausführen.
 
@@ -602,7 +542,8 @@ Später wieder auf den neuesten Stand: `sudo -u medienserver git checkout master
 | Status | `sudo docker compose ps` |
 | Alles stoppen / starten | `sudo docker compose stop` / `sudo docker compose up -d` |
 | App neu starten | `sudo docker compose restart app` |
-| Logs App / Caddy / DNS | `sudo docker compose logs --tail=100 app` (bzw. `caddy`, `ddns`) |
+| Logs App / Caddy | `sudo docker compose logs --tail=100 app` (bzw. `caddy`) |
+| Dynamic DNS | `systemctl status ddclient --no-pager` und `dig +short medienserver.michael-gonaus.dev` |
 | Benutzer anlegen | `sudo docker compose exec app flask --app app create-user NAME --role teilnehmer` |
 | Passwort Admin zurücksetzen | `sudo docker compose exec app flask --app app set-password admin` |
 | Speicher | `df -h /opt /home` und `sudo docker system df` |
@@ -625,8 +566,8 @@ Später wieder auf den neuesten Stand: `sudo -u medienserver git checkout master
 - HTTPS mit automatischem Zertifikat, Login-Cookie nur über HTTPS (`Secure`), CSRF-Schutz,
   Passwörter nur als Hash, Selbstregistrierung aus, Flask-Debug aus.
 - Container ohne Sonderrechte (`cap_drop: ALL`, `no-new-privileges`), App als `medienserver`.
-- Keine Geheimnisse im Image oder in Git: `SECRET_KEY` in `.env`, DNS-Passwort in
-  `/etc/medienserver/ddns.env`, beide `chmod 600`.
+- Keine Geheimnisse im Image oder in Git: `SECRET_KEY` in `.env` (`chmod 600`),
+  Namecheap-Passwort nur in `/etc/ddclient.conf` am Host.
 - **Offen:** Es gibt keine Sperre nach vielen falschen Passwörtern. Deshalb lange Passwörter
   und die Freigabe nach dem Testzeitraum wieder schließen.
 
@@ -640,7 +581,7 @@ Später wieder auf den neuesten Stand: `sudo -u medienserver git checkout master
    sudo ufw delete allow 80/tcp
    sudo ufw delete allow 443/tcp
    ```
-3. DNS: bei Namecheap den Eintrag `medien` löschen (bzw. den CNAME beim DNS-Anbieter).
+3. DNS: Der Eintrag `medienserver.michael-gonaus.dev` kann bleiben (ohne Weiterleitung ist dahinter nichts erreichbar). Andere Einträge der Domain nicht anfassen.
 
 ---
 

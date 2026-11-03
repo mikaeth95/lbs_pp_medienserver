@@ -1,12 +1,12 @@
-# Heimserver (Ubuntu, /opt/medienserver): Flask/Gunicorn + Caddy (HTTPS) + DynDNS.
+# Heimserver (Ubuntu, /opt/medienserver): Flask/Gunicorn + Caddy (HTTPS).
 # Der Raspberry Pi verwendet weiterhin compose.yaml (Nginx, nur HTTP im LAN).
+# Dynamic DNS erledigt ddclient direkt am Ubuntu-Host, nicht Docker.
 #
-# Benötigte Werte in /opt/medienserver/.env (siehe ANLEITUNG_HEIMSERVER.md, Teil 3):
+# Benötigte Werte in /opt/medienserver/.env (siehe ANLEITUNG_HEIMSERVER.md, Teil 4):
 #   COMPOSE_FILE=compose.home.yaml     damit "docker compose" automatisch diese Datei nimmt
-#   COMPOSE_PROFILES=ddns              startet den DynDNS-Dienst mit
 #   SECRET_KEY=...                     vorhandener geheimer Schlüssel
 #   PUID=122 / PGID=33                 id -u medienserver / getent group www-data
-#   MEDIENSERVER_DOMAIN=medien.example.com
+#   MEDIENSERVER_DOMAIN=medienserver.michael-gonaus.dev
 name: medienserver-home
 
 services:
@@ -91,23 +91,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    restart: unless-stopped
-
-  # Meldet die öffentliche IPv4 an den DNS-Anbieter. Startet nur mit COMPOSE_PROFILES=ddns.
-  # Zugangsdaten liegen außerhalb des Repos in /etc/medienserver/ddns.env (chmod 600).
-  ddns:
-    image: curlimages/curl:8.17.0
-    profiles: ["ddns"]
-    entrypoint: ["sh", "/ddns-update.sh"]
-    env_file:
-      - "${DDNS_ENV_FILE:-/etc/medienserver/ddns.env}"
-    volumes:
-      - ./deployment/ddns-update.sh:/ddns-update.sh:ro
-    networks:
-      - frontend
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
 networks:
