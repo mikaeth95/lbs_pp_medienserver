@@ -1,16 +1,18 @@
-# Caddy als HTTPS-Reverse-Proxy für den Heimserver (Ubuntu, ohne Docker).
-# Installation siehe ANLEITUNG_HEIMSERVER.md, Teil 5:
-#   sudo cp /opt/medienserver/deployment/Caddyfile /etc/caddy/Caddyfile
-#   sudo sed -i 's/MEDIENSERVER_DOMAIN/meinname.duckdns.org/' /etc/caddy/Caddyfile
-#   sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
-#
+# Caddy für den Heimserver (Docker, compose.home.yaml).
+# Domain und Upload-Limit kommen aus /opt/medienserver/.env (MEDIENSERVER_DOMAIN, MAX_UPLOAD_MB).
 # Caddy holt das Let's-Encrypt-Zertifikat selbst und erneuert es automatisch.
-# Dafür müssen Port 80 und 443 vom Router an 10.0.0.19 weitergeleitet sein.
+# Dafür müssen TCP 80 und 443 vom Router an 10.0.0.19 weitergeleitet sein.
 
-MEDIENSERVER_DOMAIN {
-	# Muss zu MAX_UPLOAD_MB in /opt/medienserver/.env passen.
+{
+	servers {
+		# Kein HTTP/3 (UDP 443), damit am Router nur TCP-Regeln nötig sind.
+		protocols h1 h2
+	}
+}
+
+{$MEDIENSERVER_DOMAIN} {
 	request_body {
-		max_size 2048MB
+		max_size {$MAX_UPLOAD_MB:2048}MB
 	}
 
 	header {
@@ -22,27 +24,23 @@ MEDIENSERVER_DOMAIN {
 	}
 
 	handle_path /static/* {
-		root * /opt/medienserver/static
+		root * /srv/medienserver-static
 		file_server
 	}
 
 	handle {
-		reverse_proxy 127.0.0.1:8000 {
+		reverse_proxy app:8000 {
 			# Flask prüft die Anmeldung und antwortet mit X-Accel-Redirect (MEDIA_X_ACCEL=1).
 			# Caddy liefert die Datei dann selbst aus, inklusive Range-Requests zum Vorspulen.
-			# /_protected/videos/<datei> -> /opt/medienserver/uploads/videos/<datei>
+			# /_protected/videos/<datei> -> /srv/medienserver-data/videos/<datei>
 			@accel header X-Accel-Redirect *
 			handle_response @accel {
-				root * /opt/medienserver/uploads
+				root * /srv/medienserver-data
 				rewrite * {rp.header.X-Accel-Redirect}
 				uri strip_prefix /_protected
 				method * GET
 				file_server
 			}
 		}
-	}
-
-	log {
-		output file /var/log/caddy/medienserver.log
 	}
 }

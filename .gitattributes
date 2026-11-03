@@ -4,4 +4,5 @@
 *.conf    text eol=lf
 Caddyfile text eol=lf
 compose.yaml text eol=lf
+compose.home.yaml text eol=lf
 Dockerfile   text eol=lf

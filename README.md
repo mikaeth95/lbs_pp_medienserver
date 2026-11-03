@@ -136,7 +136,7 @@ Die Tests verwenden temporäre JSON- und Mediendateien. Wenn die projektlokalen 
 
 ## Ubuntu-Heimserver mit HTTPS (vorübergehend)
 
-Für den Test über das Internet läuft der Medienserver auf dem Heimserver `server-home` (Ubuntu, `10.0.0.19`): Gunicorn nur auf `127.0.0.1:8000`, davor Caddy mit automatischem Let's-Encrypt-Zertifikat, DuckDNS für den festen Namen und systemd für den Autostart. Caddy liefert Videos per `X-Accel-Redirect` aus (`deployment/Caddyfile`), Flask prüft vorher die Anmeldung. Alle Schritte inklusive Firewall, Router, Backup, Update und Rückweg stehen in [ANLEITUNG_HEIMSERVER.md](ANLEITUNG_HEIMSERVER.md).
+Für den Test über das Internet läuft der Medienserver auf dem Heimserver `server-home` (Ubuntu 24.04, `10.0.0.19`) mit `compose.home.yaml`: Container `app` (Flask + Gunicorn, nur im internen Docker-Netz), Container `caddy` (HTTPS mit automatischem Let's-Encrypt-Zertifikat, einzige veröffentlichte Ports 80/443) und Container `ddns` (meldet die wechselnde A1-Adresse an Namecheap bzw. DuckDNS). Flask prüft die Anmeldung, Caddy liefert Videos per `X-Accel-Redirect` aus (`deployment/Caddyfile`). Daten bleiben als Bind Mounts in `data/` und `uploads/`. `deployment/backup-home.sh` sichert und prüft sie konsistent und spielt sie wieder ein. Die Pi-Konfiguration `compose.yaml` bleibt unverändert. Umstellung vom bisherigen systemd-Dienst, Router, Firewall, DNS, Backup, Update und Rollback: [ANLEITUNG_HEIMSERVER.md](ANLEITUNG_HEIMSERVER.md).
 
 ## Raspberry Pi mit Docker Compose (Produktion)
 

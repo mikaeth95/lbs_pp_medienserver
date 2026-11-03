@@ -1,0 +1,117 @@
+# Heimserver (Ubuntu, /opt/medienserver): Flask/Gunicorn + Caddy (HTTPS) + DynDNS.
+# Der Raspberry Pi verwendet weiterhin compose.yaml (Nginx, nur HTTP im LAN).
+#
+# Benötigte Werte in /opt/medienserver/.env (siehe ANLEITUNG_HEIMSERVER.md, Teil 3):
+#   COMPOSE_FILE=compose.home.yaml     damit "docker compose" automatisch diese Datei nimmt
+#   COMPOSE_PROFILES=ddns              startet den DynDNS-Dienst mit
+#   SECRET_KEY=...                     vorhandener geheimer Schlüssel
+#   PUID=122 / PGID=33                 id -u medienserver / getent group www-data
+#   MEDIENSERVER_DOMAIN=medien.example.com
+name: medienserver-home
+
+services:
+  app:
+    build: .
+    image: medienserver-app:home
+    user: "${PUID:?PUID in .env setzen (id -u medienserver)}:${PGID:?PGID in .env setzen (getent group www-data)}"
+    # umask 0027: neue Dateien 0640, wie beim bisherigen systemd-Dienst (Gruppe www-data darf lesen).
+    command:
+      - sh
+      - -c
+      - >-
+        umask 0027 && exec gunicorn --workers 2 --threads 4 --timeout 300
+        --graceful-timeout 120 --worker-tmp-dir /dev/shm
+        --bind 0.0.0.0:8000 'app:create_app()'
+    environment:
+      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY fehlt in .env}"
+      METADATA_DIR: /srv/medienserver-data/metadata
+      USER_DIR: /srv/medienserver-data/users
+      VIDEO_DIR: /srv/medienserver-data/videos
+      THUMBNAIL_DIR: /srv/medienserver-data/thumbnails
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-2048}"
+      # Öffentlich im Internet: fest eingestellt, nicht über .env abschaltbar.
+      ALLOW_REGISTRATION: "0"
+      MEDIA_X_ACCEL: "1"
+      SESSION_COOKIE_SECURE: "1"
+      FFPROBE_PATH: /usr/bin/ffprobe
+      FFMPEG_PATH: /usr/bin/ffmpeg
+    volumes:
+      - ./data/videos:/srv/medienserver-data/metadata
+      - ./data/users:/srv/medienserver-data/users
+      - ./uploads/videos:/srv/medienserver-data/videos
+      - ./uploads/thumbnails:/srv/medienserver-data/thumbnails
+    # Kein "ports": Gunicorn ist nur im internen Docker-Netz für Caddy erreichbar.
+    expose:
+      - "8000"
+    networks:
+      - backend
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/login', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    # Laufende Uploads dürfen beim Stoppen (Update, Backup) noch fertig werden.
+    stop_grace_period: 130s
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.10-alpine
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      MEDIENSERVER_DOMAIN: "${MEDIENSERVER_DOMAIN:?MEDIENSERVER_DOMAIN in .env setzen}"
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-2048}"
+    volumes:
+      - ./deployment/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./static:/srv/medienserver-static:ro
+      - ./uploads/videos:/srv/medienserver-data/videos:ro
+      - ./uploads/thumbnails:/srv/medienserver-data/thumbnails:ro
+      # Zertifikate und ACME-Konto; liegen auf dem Host, damit sie Neustarts und Backups überstehen.
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+    networks:
+      - frontend
+      - backend
+    # Caddy läuft als root im Container, aber ohne Sonderrechte. Lesen darf es die Videos
+    # nur über die Gruppe www-data (PGID), genau wie die Dateirechte am Host es vorsehen.
+    group_add:
+      - "${PGID}"
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Meldet die öffentliche IPv4 an den DNS-Anbieter. Startet nur mit COMPOSE_PROFILES=ddns.
+  # Zugangsdaten liegen außerhalb des Repos in /etc/medienserver/ddns.env (chmod 600).
+  ddns:
+    image: curlimages/curl:8.17.0
+    profiles: ["ddns"]
+    entrypoint: ["sh", "/ddns-update.sh"]
+    env_file:
+      - "${DDNS_ENV_FILE:-/etc/medienserver/ddns.env}"
+    volumes:
+      - ./deployment/ddns-update.sh:/ddns-update.sh:ro
+    networks:
+      - frontend
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+networks:
+  frontend: {}
+  # internal: Die App hat keinen Internetzugang und ist nur für Caddy erreichbar.
+  backend:
+    internal: true

@@ -14,3 +14,5 @@ tech_documentation
 *.xlsx
 *.sqlite3
 *.db
+caddy
+vor-restore-*

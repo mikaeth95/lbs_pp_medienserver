@@ -12,3 +12,5 @@ uploads/
 .coverage
 htmlcov/
 tools/
+caddy/
+vor-restore-*/

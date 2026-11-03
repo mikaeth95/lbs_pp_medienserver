@@ -2,14 +2,11 @@
 # Sichert Videos, Vorschaubilder, Metadaten, Benutzer und .env als .tar.gz.
 # Aufruf am Pi:  bash /home/pi/medienserver/deployment/backup.sh
 # Einstellungen per Umgebungsvariable, z. B.:  KEEP=5 bash deployment/backup.sh
-# Heimserver (als root): PROJECT_DIR=/opt/medienserver BACKUP_DIR=/home/michael/medienserver-backups \
-#                        BACKUP_OWNER=michael bash /opt/medienserver/deployment/backup.sh
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/home/pi/medienserver}"
 BACKUP_DIR="${BACKUP_DIR:-/home/pi/backups}"
 KEEP="${KEEP:-3}"   # so viele Sicherungen bleiben liegen, aeltere werden geloescht
-BACKUP_OWNER="${BACKUP_OWNER:-}"   # optional: Benutzer, der die Sicherung per scp abholen darf
 
 cd "$PROJECT_DIR"
 for item in data uploads .env; do
@@ -35,9 +32,6 @@ target="$BACKUP_DIR/medienserver_$stamp.tar.gz"
 tar -czf "$target.tmp" data uploads .env
 mv "$target.tmp" "$target"
 chmod 600 "$target"   # enthaelt den SECRET_KEY
-if [ -n "$BACKUP_OWNER" ]; then
-    chown "$BACKUP_OWNER" "$target"
-fi
 
 # Alte Sicherungen loeschen, die neuesten $KEEP behalten.
 ls -1t "$BACKUP_DIR"/medienserver_*.tar.gz 2>/dev/null | tail -n +"$((KEEP + 1))" | xargs -r rm --
