@@ -15,6 +15,12 @@
           <code>flask --app app create-user admin</code>
         </div>
       {% endif %}
+      {% if lock_text %}
+        <figure class="lockout">
+          <img src="{{ url_for('static', filename='img/zu-viele-versuche.jpg') }}" alt="Katze tippt wild auf der Tastatur herum: „Some heavy typing going on here!“" width="564" height="564">
+          <figcaption class="flash flash-error">{{ lock_text }}</figcaption>
+        </figure>
+      {% endif %}
       <form method="post" class="form-stack">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label><span>Benutzername</span><input name="username" required autocomplete="username" autocapitalize="none" value="{{ request.form.get('username', '') }}" autofocus></label>

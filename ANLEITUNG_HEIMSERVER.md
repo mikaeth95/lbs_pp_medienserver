@@ -194,7 +194,7 @@ sudo grep -v '^SECRET_KEY=' .env
 
 Die Zeilen werden nur angehängt, wenn sie noch fehlen; vorhandene Einträge bleiben unverändert.
 Der letzte Befehl zeigt alles außer dem Geheimnis. `SESSION_COOKIE_SECURE=1`,
-`ALLOW_REGISTRATION=0` und `MEDIA_X_ACCEL=1` sind in `compose.home.yaml` fest eingestellt
+`ALLOW_REGISTRATION=1`, `MEDIA_X_ACCEL=1` und `TRUST_PROXY=1` sind in `compose.home.yaml` fest eingestellt
 und lassen sich über `.env` nicht versehentlich abschalten.
 
 Durch `COMPOSE_FILE` verwendet `sudo docker compose …` in `/opt/medienserver` automatisch
@@ -343,8 +343,8 @@ das ist kein Fehler des Servers, dann am Handy prüfen.
 | --- | --- |
 | `https://medienserver.michael-gonaus.dev` zeigt ein Schloss, keine Zertifikatswarnung | ☐ |
 | Anmeldung mit vorhandenem Konto klappt, falsches Passwort wird abgelehnt | ☐ |
-| „Registrieren“ gibt es nicht (Konten legt der Admin an) | ☐ |
-| Ohne Anmeldung: nur Login-Seite, auch Video-Links leiten auf Login um | ☐ |
+| Registrieren als Teilnehmer klappt, Trainer-Anfrage erscheint beim Admin | ☐ |
+| Ohne Anmeldung: nur Login/Registrieren, auch Video-Links leiten auf Login um | ☐ |
 | Video startet, Vorspulen und ±10-Sekunden-Tasten gehen, Ton ist da | ☐ |
 | Trainer lädt ein Video hoch, Dauer und Vorschaubild werden erzeugt | ☐ |
 | Teilnehmer sieht keinen Upload-Button | ☐ |
@@ -561,10 +561,10 @@ Später wieder auf den neuesten Stand: `sudo -u medienserver git checkout master
 
 ### Sicherheit – was geschützt ist, was offen bleibt
 
-- Ohne Anmeldung ist nur die Login-Seite erreichbar. Vor jeder Video- und Bildauslieferung
+- Ohne Anmeldung sind nur Login- und Registrierungsseite erreichbar. Vor jeder Video- und Bildauslieferung
   prüft Flask die Anmeldung; erst dann liefert Caddy die Datei.
 - HTTPS mit automatischem Zertifikat, Login-Cookie nur über HTTPS (`Secure`), CSRF-Schutz,
-  Passwörter nur als Hash, Selbstregistrierung aus, Flask-Debug aus.
+  Passwörter nur als Hash, Selbstregistrierung nur als Teilnehmer, Flask-Debug aus.
 - Container ohne Sonderrechte (`cap_drop: ALL`, `no-new-privileges`), App als `medienserver`.
 - Keine Geheimnisse im Image oder in Git: `SECRET_KEY` in `.env` (`chmod 600`),
   Namecheap-Passwort nur in `/etc/ddclient.conf` am Host.

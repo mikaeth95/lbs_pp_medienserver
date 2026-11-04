@@ -29,9 +29,11 @@ services:
       VIDEO_DIR: /srv/medienserver-data/videos
       THUMBNAIL_DIR: /srv/medienserver-data/thumbnails
       MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-2048}"
-      # Öffentlich im Internet: fest eingestellt, nicht über .env abschaltbar.
-      ALLOW_REGISTRATION: "0"
+      # Selbstregistrierung erlaubt (nur als Teilnehmer; Trainer schaltet der Admin frei).
+      ALLOW_REGISTRATION: "1"
       MEDIA_X_ACCEL: "1"
+      # Client-IP aus X-Forwarded-For von Caddy (für die Anmeldesperre).
+      TRUST_PROXY: "1"
       SESSION_COOKIE_SECURE: "1"
       FFPROBE_PATH: /usr/bin/ffprobe
       FFMPEG_PATH: /usr/bin/ffmpeg

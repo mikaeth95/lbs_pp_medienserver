@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import math
 import os
 import re
 import secrets
 import subprocess
+import time
 import uuid
 from datetime import datetime
 from functools import lru_cache, wraps
@@ -26,6 +29,7 @@ from flask import (
     session,
     url_for,
 )
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash, safe_join
 from werkzeug.utils import secure_filename
 
@@ -34,6 +38,8 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 VIDEO_EXTENSIONS = {".mp4"}
+# Vorschaubild nach 10 s statt des ersten Frames (oft schwarz oder ein Titelbild).
+THUMBNAIL_SECOND = 10
 LANGUAGES = {"DE": "Deutsch", "EN": "Englisch"}
 YEAR_PATTERN = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 SORT_OPTIONS = {
@@ -50,6 +56,9 @@ USERNAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]$")
 # Unter Windows nicht als Dateiname erlaubt, auch nicht mit Endung.
 RESERVED_USERNAME = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)")
 MIN_PASSWORD_LENGTH = 8
+# Nach 3 falschen Passwörtern ist die Anmeldung von dieser IP-Adresse 5 Minuten gesperrt.
+MAX_LOGIN_ATTEMPTS = 3
+LOGIN_LOCK_SECONDS = 5 * 60
 PUBLIC_ENDPOINTS = {"login", "logout", "register", "static"}
 
 
@@ -92,9 +101,14 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         SESSION_COOKIE_SAMESITE="Lax",
         # Nur hinter HTTPS (Caddy am Heimserver) einschalten, sonst klappt der Login über HTTP nicht.
         SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "0") == "1",
+        # Nur hinter Nginx/Caddy einschalten: Dann ist die Client-IP die aus X-Forwarded-For.
+        # Ohne Proxy könnte sonst jeder Browser eine beliebige IP vortäuschen.
+        TRUST_PROXY=os.getenv("TRUST_PROXY", "0") == "1",
     )
     if test_config:
         app.config.update(test_config)
+    if app.config["TRUST_PROXY"]:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
 
     for key in ("METADATA_DIR", "USER_DIR", "VIDEO_DIR", "THUMBNAIL_DIR"):
         app.config[key] = configured_path(app.config[key])
@@ -385,6 +399,68 @@ def dummy_password_hash() -> str:
     return generate_password_hash(secrets.token_urlsafe(16))
 
 
+def client_address_key() -> str | None:
+    try:
+        address = ipaddress.ip_address(request.remote_addr or "")
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        # Ein Anschluss hat meist ein ganzes /64-Netz; sonst gäbe es pro Versuch eine neue Adresse.
+        network = ipaddress.ip_network(f"{address}/64", strict=False).network_address
+        return f"{network}-64".replace(":", "_")
+    return str(address)
+
+
+def login_attempts_path(client: str | None) -> Path | None:
+    # Eigener Unterordner: list_users() liest nur die *.json direkt in USER_DIR.
+    # Auf der Platte statt im Speicher, damit alle Gunicorn-Worker denselben Zähler sehen.
+    if client is None:
+        return None
+    return Path(current_app_config("USER_DIR")) / ".login_attempts" / f"{client}.json"
+
+
+def read_login_attempts(client: str | None) -> dict[str, Any]:
+    path = login_attempts_path(client)
+    if path is None or not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def login_locked_seconds(client: str | None) -> int:
+    remaining = float(read_login_attempts(client).get("locked_until", 0)) - time.time()
+    return max(0, math.ceil(remaining))
+
+
+def record_failed_login(client: str | None) -> None:
+    path = login_attempts_path(client)
+    if path is None:
+        return
+    attempts = read_login_attempts(client)
+    now = time.time()
+    # Fehlversuche verfallen erst nach der Sperrzeit, nicht durch eine erfolgreiche Anmeldung:
+    # Sonst könnte man zwischen zwei Rateversuchen kurz das eigene Konto benutzen.
+    recent = now - float(attempts.get("last_failed_at", 0)) < LOGIN_LOCK_SECONDS
+    failed = int(attempts.get("failed", 0)) + 1 if recent else 1
+    if failed >= MAX_LOGIN_ATTEMPTS:
+        attempts = {"failed": 0, "last_failed_at": 0, "locked_until": now + LOGIN_LOCK_SECONDS}
+    else:
+        attempts = {"failed": failed, "last_failed_at": now, "locked_until": 0}
+    path.parent.mkdir(exist_ok=True)
+    write_json(path, attempts)
+
+
+def lock_message(seconds: int) -> str:
+    minutes = math.ceil(seconds / 60)
+    unit = "Minute" if minutes == 1 else "Minuten"
+    return f"Zu viele Fehlversuche. Bitte in {minutes} {unit} erneut versuchen."
+
+
 def authenticate(username: str, password: str) -> dict[str, Any] | None:
     user = read_user(normalize_username(username))
     if user is None:
@@ -477,7 +553,7 @@ def probe_video_metadata(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def generate_thumbnail(video_path: Path, directory: Path) -> str | None:
+def generate_thumbnail(video_path: Path, directory: Path, second: int = 0) -> str | None:
     filename = f"{video_path.stem}-{uuid.uuid4().hex}.jpg"
     output_path = directory / filename
     try:
@@ -487,6 +563,8 @@ def generate_thumbnail(video_path: Path, directory: Path) -> str | None:
                 "-y",
                 "-loglevel",
                 "error",
+                "-ss",
+                str(second),
                 "-i",
                 str(video_path),
                 "-frames:v",
@@ -561,7 +639,11 @@ def analyze_upload(video_filename: str) -> tuple[dict[str, Any], str]:
             "Dauer und Erscheinungsjahr konnten nicht gelesen werden. "
             "Bitte eine gültige MP4-Datei hochladen und ffprobe prüfen."
         )
-    thumbnail = generate_thumbnail(video_path, Path(current_app_config("THUMBNAIL_DIR")))
+    # Kürzere Videos haben bei Sekunde 10 kein Bild mehr, dann den ersten Frame nehmen.
+    second = THUMBNAIL_SECOND if automatic["duration_seconds"] > THUMBNAIL_SECOND else 0
+    thumbnail = generate_thumbnail(
+        video_path, Path(current_app_config("THUMBNAIL_DIR")), second
+    )
     if thumbnail is None:
         raise ValueError(
             "Das Vorschaubild konnte nicht erzeugt werden. Bitte Videodatei und ffmpeg prüfen."
@@ -765,15 +847,26 @@ def register_user_routes(app: Flask) -> None:
     def login():
         if g.user is not None:
             return redirect(safe_next(request.args.get("next")))
+        client = client_address_key()
+        locked = login_locked_seconds(client)
         if request.method == "POST":
-            user = authenticate(request.form.get("username", ""), request.form.get("password", ""))
-            if user is None:
-                flash("Benutzername oder Passwort ist falsch, oder das Konto ist gesperrt.", "error")
-            else:
-                log_in(user)
-                flash(f"Willkommen, {user['username']}!", "success")
-                return redirect(safe_next(request.args.get("next")))
-        return render_template("auth/login.html", no_users=not list_users())
+            # Während der Sperre wird das Passwort gar nicht erst geprüft.
+            if not locked:
+                user = authenticate(request.form.get("username", ""), request.form.get("password", ""))
+                if user is not None:
+                    log_in(user)
+                    flash(f"Willkommen, {user['username']}!", "success")
+                    return redirect(safe_next(request.args.get("next")))
+                record_failed_login(client)
+                locked = login_locked_seconds(client)
+                if not locked:
+                    flash("Benutzername oder Passwort ist falsch, oder das Konto ist gesperrt.", "error")
+        # Die Sperre zeigt das Template selbst an, damit sie auch nach dem Neuladen sichtbar bleibt.
+        lock_text = lock_message(locked) if locked else None
+        return (
+            render_template("auth/login.html", no_users=not list_users(), lock_text=lock_text),
+            429 if locked else 200,
+        )
 
     @app.route("/register", methods=["GET", "POST"])
     def register():

@@ -86,7 +86,7 @@ def fake_media(monkeypatch):
         },
     )
 
-    def fake_thumbnail(video_path, directory):
+    def fake_thumbnail(video_path, directory, second=0):
         filename = f"{Path(video_path).stem}-{uuid.uuid4().hex}.jpg"
         Path(directory, filename).write_bytes(b"generated-thumbnail")
         return filename

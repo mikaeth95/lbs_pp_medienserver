@@ -11,7 +11,7 @@ Eine kleine deutschsprachige Videothek auf Basis von Flask und JSON-Dokumenten. 
 - CSRF-Schutz, gehashte Passwörter, sichere Upload-Dateinamen und konfigurierbares Upload-Limit
 - Eine eigene JSON-Datei pro Video und pro Benutzer; Videos und Vorschaubilder bleiben in getrennten Ordnern
 - HTTP-Range-Unterstützung im lokalen Flask-Betrieb; auf dem Pi prüft Flask die Anmeldung und Nginx liefert die Videos aus
-- Automatische Dauerermittlung mit `ffprobe` und Vorschaubild aus dem ersten Frame mit `ffmpeg`
+- Automatische Dauerermittlung mit `ffprobe` und Vorschaubild nach 10 Sekunden mit `ffmpeg` (bei kürzeren Videos erster Frame)
 
 ## Windows: Einrichtung in PowerShell
 
@@ -70,6 +70,7 @@ Nach der Anmeldung lädst du als Trainer oder Administrator ein Video unter <htt
 | Eigenes Passwort ändern (**Mein Konto**) | ✅ | ✅ | ✅ |
 
 - Ohne Anmeldung sind nur Anmelden und Registrieren erreichbar, auch Video- und Bilddateien sind geschützt.
+- Nach 3 falschen Passwörtern ist die Anmeldung von dieser IP-Adresse 5 Minuten gesperrt (auch mit dem richtigen Passwort, bei IPv6 das ganze /64-Netz). Hinter Nginx/Caddy dafür `TRUST_PROXY=1` setzen.
 - Bei der Registrierung wählt man **Teilnehmer** oder **Trainer**. Teilnehmer können sofort loslegen. Ein Trainer-Konto startet als Teilnehmer mit dem Vermerk „Trainer angefragt“; ein Administrator schaltet es unter **Benutzer → Offene Trainer-Anfragen** frei oder lehnt ab. Mit `ALLOW_REGISTRATION=0` legt nur der Administrator Konten an.
 - Jedes Video speichert im Feld `owner`, wer es hochgeladen hat. Videos ohne Besitzer, etwa ältere Uploads oder Videos gelöschter Benutzer, verwaltet nur ein Administrator; er kann sie beim Bearbeiten einem Trainer zuweisen.
 - Ein Administrator kann die eigene Rolle nicht ändern, sich nicht sperren und nicht löschen. So bleibt immer ein Administrator übrig.
@@ -78,7 +79,7 @@ Nach der Anmeldung lädst du als Trainer oder Administrator ein Video unter <htt
 
 ## Erstes Video hinzufügen
 
-Im Repository liegt bewusst kein Testvideo. Wähle in der Navigation **Video hochladen**. Eingetragen werden nur Titel, Beschreibung, Thema und Sprache; dazu kommt die MP4-Datei. `ffprobe` liest Dauer, eingebettetes Erscheinungsjahr und sämtliche technischen Stream- und Containerdaten wie Codec, Auflösung, Bildrate, Audio und Bitrate aus. Fehlt eine Jahresangabe in der Datei, wird das aktuelle Uploadjahr verwendet. `ffmpeg` erzeugt das Vorschaubild aus dem ersten Frame.
+Im Repository liegt bewusst kein Testvideo. Wähle in der Navigation **Video hochladen**. Eingetragen werden nur Titel, Beschreibung, Thema und Sprache; dazu kommt die MP4-Datei. `ffprobe` liest Dauer, eingebettetes Erscheinungsjahr und sämtliche technischen Stream- und Containerdaten wie Codec, Auflösung, Bildrate, Audio und Bitrate aus. Fehlt eine Jahresangabe in der Datei, wird das aktuelle Uploadjahr verwendet. `ffmpeg` erzeugt das Vorschaubild aus dem Bild nach 10 Sekunden; ist das Video kürzer, aus dem ersten Frame.
 
 Projektlokale Programme unter `tools/ffmpeg/bin/ffprobe.exe` und `tools/ffmpeg/bin/ffmpeg.exe` werden automatisch erkannt. Alternativ lassen sich `FFPROBE_PATH` und `FFMPEG_PATH` in `.env` setzen. Kann eines der drei automatischen Felder nicht erzeugt werden, wird der Upload mit einer verständlichen Fehlermeldung abgebrochen und die unvollständige Datei entfernt.
 
@@ -116,9 +117,10 @@ Die Datei `.env.example` dokumentiert alle Einstellungen:
 | `MAX_UPLOAD_MB` | `2048` | maximales Volumen einer Upload-Anfrage |
 | `ALLOW_REGISTRATION` | `1` | `1` erlaubt Selbstregistrierung als Teilnehmer, `0` schaltet sie ab |
 | `MEDIA_X_ACCEL` | `0` | `1` nur hinter Nginx oder Caddy mit `deployment/`-Konfiguration: Flask prüft die Anmeldung, der Webserver liefert die Datei |
+| `TRUST_PROXY` | `0` | `1` nur hinter Nginx oder Caddy: Client-IP für die Anmeldesperre aus `X-Forwarded-For` |
 | `SESSION_COOKIE_SECURE` | `0` | `1` nur bei HTTPS (Heimserver): Login-Cookie wird nie unverschlüsselt gesendet |
 | `FFPROBE_PATH` | `ffprobe` | Programm/Pfad für die Dauerermittlung |
-| `FFMPEG_PATH` | `ffmpeg` | Programm/Pfad für ein Vorschaubild aus dem ersten Frame |
+| `FFMPEG_PATH` | `ffmpeg` | Programm/Pfad für das Vorschaubild (Bild nach 10 Sekunden) |
 | `FLASK_HOST` | `127.0.0.1` | `0.0.0.0` erlaubt LAN-Zugriff |
 | `FLASK_PORT` | `5000` | lokaler Port |
 | `FLASK_DEBUG` | `0` | Debug-Modus; im Normalbetrieb ausgeschaltet lassen |
@@ -232,6 +234,7 @@ SECRET_KEY=einen-langen-zufaelligen-wert-eintragen
 METADATA_DIR=/srv/medienserver-data/metadata
 USER_DIR=/srv/medienserver-data/users
 MEDIA_X_ACCEL=1
+TRUST_PROXY=1
 VIDEO_DIR=/srv/medienserver-data/videos
 THUMBNAIL_DIR=/srv/medienserver-data/thumbnails
 MAX_UPLOAD_MB=2048

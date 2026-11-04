@@ -41,6 +41,61 @@ def test_login_rejects_wrong_password_and_stores_only_hashes(app):
     assert stored["password_hash"].startswith(("scrypt:", "pbkdf2:"))
 
 
+def test_login_locks_ip_after_three_wrong_passwords(app, monkeypatch):
+    client = app.test_client()
+    for _ in range(2):
+        assert "Passwort ist falsch" in login(client, "trainer", "falsches-passwort").text
+    # Die Sperre gilt für die IP, egal welcher Benutzername probiert wird.
+    response = login(client, "admin", "falsches-passwort")
+    assert response.status_code == 429
+    assert "Bitte in 5 Minuten erneut versuchen" in response.text
+    assert "zu-viele-versuche.jpg" in response.text
+    # Während der Sperre hilft auch das richtige Passwort nicht, und das Bild bleibt beim Neuladen.
+    assert login(client, "trainer").status_code == 429
+    assert client.get("/").status_code == 302
+    assert "zu-viele-versuche.jpg" in client.get("/login").text
+    # Ein anderes Gerät kann sich weiter anmelden.
+    other = app.test_client()
+    other.environ_base["REMOTE_ADDR"] = "10.0.0.50"
+    assert "Willkommen" in login(other, "schueler").text
+    # Nach Ablauf der Sperre klappt die Anmeldung wieder.
+    later = app_module.time.time() + app_module.LOGIN_LOCK_SECONDS + 1
+    monkeypatch.setattr(app_module.time, "time", lambda: later)
+    assert "Willkommen" in login(client, "trainer").text
+
+
+def test_successful_login_does_not_reset_failed_attempts(app):
+    client = app.test_client()
+    for _ in range(2):
+        login(client, "trainer", "falsches-passwort")
+    assert "Willkommen" in login(client, "schueler").text
+    client.post("/logout", data={"csrf_token": csrf_from(client.get("/"))})
+    assert login(client, "trainer", "falsches-passwort").status_code == 429
+
+
+def test_login_lock_uses_forwarded_ip_only_behind_proxy(app):
+    def wrong_logins(application, forwarded_for):
+        for address in forwarded_for:
+            client = application.test_client()
+            client.environ_base["HTTP_X_FORWARDED_FOR"] = address
+            response = login(client, "trainer", "falsches-passwort")
+        return response.status_code
+
+    # Ohne TRUST_PROXY zählt die echte Verbindung, ein vorgetäuschter Header hilft nicht.
+    assert wrong_logins(app, ["1.1.1.1", "2.2.2.2", "3.3.3.3"]) == 429
+    behind_proxy = app_module.create_app({**app.config, "TRUST_PROXY": True})
+    assert wrong_logins(behind_proxy, ["1.1.1.1", "2.2.2.2", "3.3.3.3"]) == 200
+    assert wrong_logins(behind_proxy, ["4.4.4.4"] * 3) == 429
+
+
+def test_ipv6_lock_covers_whole_64_network(app):
+    for host in ("1", "2", "3"):
+        client = app.test_client()
+        client.environ_base["REMOTE_ADDR"] = f"2001:db8:1:2::{host}"
+        response = login(client, "trainer", "falsches-passwort")
+    assert response.status_code == 429
+
+
 def test_login_is_case_insensitive_and_follows_safe_next(app):
     client = app.test_client()
     token = csrf_from(client.get("/login"))
