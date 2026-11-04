@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import math
@@ -225,7 +226,25 @@ def format_duration(seconds: int | None) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
+@lru_cache(maxsize=32)
+def file_fingerprint(path: Path, modified: int) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:10]
+
+
+def asset_url(filename: str) -> str:
+    # ?v=<Inhalts-Hash>: Nach einer Änderung lädt jeder Browser die Datei neu statt aus dem Cache.
+    # Nach dem Inhalt statt nach dem Datum, weil Caddy eine andere Kopie ausliefert als im Image liegt.
+    path = Path(current_app_config("STATIC_DIR_PATH")) / filename
+    try:
+        version = file_fingerprint(path, path.stat().st_mtime_ns)
+    except OSError:
+        return url_for("static", filename=filename)
+    return url_for("static", filename=filename, v=version)
+
+
 def register_template_helpers(app: Flask) -> None:
+    app.config["STATIC_DIR_PATH"] = app.static_folder
+    app.jinja_env.globals["asset_url"] = asset_url
     app.jinja_env.filters["duration"] = format_duration
     app.jinja_env.globals["language_names"] = LANGUAGES
     app.jinja_env.globals["role_names"] = ROLES

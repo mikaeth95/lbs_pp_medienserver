@@ -17,7 +17,7 @@
       {% endif %}
       {% if lock_text %}
         <figure class="lockout">
-          <img src="{{ url_for('static', filename='img/zu-viele-versuche.jpg') }}" alt="Katze tippt wild auf der Tastatur herum: „Some heavy typing going on here!“" width="564" height="564">
+          <img src="{{ asset_url('img/zu-viele-versuche.jpg') }}" alt="Katze tippt wild auf der Tastatur herum: „Some heavy typing going on here!“" width="564" height="564">
           <figcaption class="flash flash-error">{{ lock_text }}</figcaption>
         </figure>
       {% endif %}
